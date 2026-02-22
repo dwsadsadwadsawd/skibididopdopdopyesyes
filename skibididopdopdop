@@ -115,26 +115,26 @@ local QPressedBody = false
 
 -- AI variables
 local AIConnection = nil
-local AIPathfindingConnection = nil
-local AIState = "idle" -- idle, walking, fleeing, sitting, looking
+local AIState = "idle" -- idle, walking, following, hiding, exploring, fleeing, sitting
+local AIMode = "explore" -- explore, follow, hide, sit, flee
+local AITargetPlayer = nil
 local AITargetPosition = nil
 local AILookTarget = nil
-local AITimer = 0
+local AILookTimer = 0
+local AIActionTimer = 0
 local AIFleeTimer = 0
-local AISitTimer = 0
-local AIPath = nil
-local AIWaypoints = {}
-local AICurrentWaypoint = 1
+local AIHideSpot = nil
 local AIWalkSpeed = 16
 local AIScanRadius = 50
-local AISitDetectionRange = 20
-local AIFleeRange = 30
 local AIFleeDuration = 5
 local AISitDuration = 3
 local AILookDuration = 2
+local AIExploreRadius = 30
+local AIHideDistance = 20
+local AIFollowDistance = 10
 
--- Points of interest for pathfinding
-local InterestPoints = {}
+-- Hide spots (will be populated with potential hiding places)
+local HideSpots = {}
 
 local function AC(c) table.insert(CN, c) return c end
 
@@ -461,71 +461,52 @@ local function ToggleCreepyPastaBody()
 end
 
 -- ==============================================
--- AI FEATURE
+-- AI FEATURE - MULTIPLE MODES
 -- ==============================================
 
--- Scan for points of interest
-local function ScanForPoints()
-    InterestPoints = {}
+-- Scan for potential hide spots (corners, behind objects)
+local function ScanForHideSpots()
+    HideSpots = {}
     
-    -- Add other players as points of interest
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then
-            local char = plr.Character
-            if char and char:FindFirstChild("HumanoidRootPart") then
-                table.insert(InterestPoints, {
-                    Position = char.HumanoidRootPart.Position,
-                    Type = "player",
-                    Player = plr
-                })
-            end
+    -- Look for large objects to hide behind
+    for _, obj in ipairs(WS:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.Size.Magnitude > 5 and not obj.Anchored then
+            -- Found a potential hiding spot
+            table.insert(HideSpots, {
+                Position = obj.Position + (obj.CFrame.LookVector * 3),
+                Object = obj
+            })
         end
     end
     
-    -- Add random points in the world (simplified - would need actual map data)
-    -- For demo, we'll just add some random offsets from current position
-    for i = 1, 5 do
-        table.insert(InterestPoints, {
-            Position = Root.Position + Vector3.new(
-                math.random(-AIScanRadius, AIScanRadius),
-                0,
-                math.random(-AIScanRadius, AIScanRadius)
-            ),
-            Type = "random"
-        })
-    end
-end
-
--- Check if someone is sitting nearby
-local function CheckForSitting()
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then
-            local char = plr.Character
-            if char then
-                local hum = char:FindFirstChild("Humanoid")
-                if hum and hum.Sit then
-                    local rootPart = char:FindFirstChild("HumanoidRootPart")
-                    if rootPart and (rootPart.Position - Root.Position).Magnitude < AISitDetectionRange then
-                        return plr, rootPart.Position
-                    end
-                end
-            end
+    -- Add some random spots if none found
+    if #HideSpots == 0 then
+        for i = 1, 5 do
+            table.insert(HideSpots, {
+                Position = Root.Position + Vector3.new(
+                    math.random(-30, 30),
+                    0,
+                    math.random(-30, 30)
+                )
+            })
         end
     end
-    return nil
 end
 
--- Check if taking damage
-local function CheckForDamage()
-    -- This would need to be connected to the Humanoid's health changing
-    -- We'll handle this in the main AI loop with a health check
-    return false
-end
-
--- Find path to target (simplified - real pathfinding would use PathfindingService)
-local function FindPathTo(targetPos)
-    -- Simple direct path - in a real implementation you'd use PathfindingService
-    return {targetPos}
+-- Find nearest hide spot
+local function FindNearestHideSpot()
+    local nearest = nil
+    local nearestDist = math.huge
+    
+    for _, spot in ipairs(HideSpots) do
+        local dist = (spot.Position - Root.Position).Magnitude
+        if dist < nearestDist and dist > 5 then
+            nearestDist = dist
+            nearest = spot.Position
+        end
+    end
+    
+    return nearest
 end
 
 -- Look at target using body rotation
@@ -539,9 +520,39 @@ local function LookAt(targetPos)
     BodyTargetAngle = angle
 end
 
+-- Look around at nearby objects
+local function LookAround()
+    -- Find something interesting to look at
+    local lookTargets = {}
+    
+    -- Look at other players
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local char = plr.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                table.insert(lookTargets, char.HumanoidRootPart.Position)
+            end
+        end
+    end
+    
+    -- Look at large objects
+    for _, obj in ipairs(WS:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.Size.Magnitude > 10 then
+            table.insert(lookTargets, obj.Position)
+        end
+    end
+    
+    if #lookTargets > 0 then
+        AILookTarget = lookTargets[math.random(#lookTargets)]
+        LookAt(AILookTarget)
+        AILookTimer = AILookDuration
+    end
+end
+
 -- Walk to target
-local function WalkTo(targetPos)
-    if not Root or not targetPos then return end
+local function WalkTo(targetPos, stopDistance)
+    stopDistance = stopDistance or 3
+    if not Root or not targetPos then return false end
     
     local direction = (targetPos - Root.Position).Unit
     local distance = (targetPos - Root.Position).Magnitude
@@ -559,10 +570,7 @@ local function WalkTo(targetPos)
     
     BodyVelocity.Velocity = direction * AIWalkSpeed
     
-    if distance < 3 then
-        return true -- Reached target
-    end
-    return false
+    return distance <= stopDistance
 end
 
 -- Stop moving
@@ -586,32 +594,204 @@ local function StandUp()
     end
 end
 
--- Main AI update
-local function UpdateAI(dt)
-    if not St.AIControl or not Root or not Hum then return end
-    
-    -- Update timers
-    AITimer = AITimer + dt
-    if AIFleeTimer > 0 then
-        AIFleeTimer = AIFleeTimer - dt
+-- ==============================================
+-- AI MODE FUNCTIONS
+-- ==============================================
+
+-- Explore Mode - Wander around looking at things
+local function ExploreMode(dt)
+    if AIState == "idle" then
+        -- Pick a random direction to explore
+        AITargetPosition = Root.Position + Vector3.new(
+            math.random(-AIExploreRadius, AIExploreRadius),
+            0,
+            math.random(-AIExploreRadius, AIExploreRadius)
+        )
+        AIState = "walking"
+        if SCB then SCB("AI: Exploring...") end
     end
-    if AISitTimer > 0 then
-        AISitTimer = AISitTimer - dt
-    end
     
-    -- Check for damage (simplified - would need health monitoring)
-    -- In a real implementation, you'd connect to Hum.HealthChanged
-    
-    -- Priority 1: Flee if taking damage
-    if AIFleeTimer > 0 then
-        if AIState ~= "fleeing" then
-            AIState = "fleeing"
-            if SCB then SCB("AI: Taking damage - fleeing!") end
+    if AIState == "walking" then
+        local reached = WalkTo(AITargetPosition)
+        
+        -- Look around while walking
+        if AILookTimer <= 0 then
+            LookAround()
+        else
+            AILookTimer = AILookTimer - dt
         end
         
-        -- Find farthest player to flee to
-        local farthestDist = 0
-        local farthestPos = Root.Position + Vector3.new(50, 0, 50)
+        if reached then
+            AIState = "looking"
+            AIActionTimer = 2
+            LookAround()
+        end
+    end
+    
+    if AIState == "looking" then
+        AIActionTimer = AIActionTimer - dt
+        if AIActionTimer <= 0 then
+            AIState = "idle"
+        end
+    end
+end
+
+-- Follow Mode - Follow selected player
+local function FollowMode(dt)
+    if not AITargetPlayer then
+        if SCB then SCB("AI: No target to follow") end
+        AIMode = "explore"
+        return
+    end
+    
+    local char = AITargetPlayer.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then
+        AIMode = "explore"
+        return
+    end
+    
+    local targetPos = char.HumanoidRootPart.Position
+    local distance = (targetPos - Root.Position).Magnitude
+    
+    -- Look at the target
+    LookAt(targetPos + Vector3.new(0, 3, 0))
+    
+    if distance > AIFollowDistance then
+        -- Follow the target
+        WalkTo(targetPos, AIFollowDistance)
+        AIState = "following"
+        if SCB then SCB("AI: Following " .. AITargetPlayer.Name) end
+    else
+        -- Close enough, just watch
+        StopMoving()
+        AIState = "watching"
+    end
+end
+
+-- Hide Mode - Find and hide behind objects
+local function HideMode(dt)
+    if AIState == "idle" then
+        -- Find a hiding spot
+        AIHideSpot = FindNearestHideSpot()
+        if AIHideSpot then
+            AITargetPosition = AIHideSpot
+            AIState = "hiding"
+            if SCB then SCB("AI: Hiding...") end
+        else
+            -- No hiding spots, just crouch
+            AIState = "crouching"
+        end
+    end
+    
+    if AIState == "hiding" then
+        local reached = WalkTo(AITargetPosition, 2)
+        
+        if reached then
+            -- Found hiding spot, crouch and look around
+            StopMoving()
+            AIState = "hidden"
+            AIActionTimer = 5
+            LookAround()
+        end
+    end
+    
+    if AIState == "hidden" then
+        AIActionTimer = AIActionTimer - dt
+        if AILookTimer <= 0 then
+            -- Look around while hidden
+            LookAround()
+        else
+            AILookTimer = AILookTimer - dt
+        end
+        
+        -- Check if someone is nearby
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LP then
+                local char = plr.Character
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    local dist = (char.HumanoidRootPart.Position - Root.Position).Magnitude
+                    if dist < 10 then
+                        -- Someone is close, stay hidden
+                        if SCB then SCB("AI: Someone nearby - staying hidden") end
+                    end
+                end
+            end
+        end
+        
+        if AIActionTimer <= 0 then
+            -- Time to find a new hiding spot
+            AIState = "idle"
+        end
+    end
+end
+
+-- Sit Mode - Find someone sitting and join them
+local function SitMode(dt)
+    -- Look for sitting players
+    local sittingPlayer = nil
+    local sittingPos = nil
+    
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local char = plr.Character
+            if char then
+                local hum = char:FindFirstChild("Humanoid")
+                if hum and hum.Sit then
+                    local rootPart = char:FindFirstChild("HumanoidRootPart")
+                    if rootPart then
+                        sittingPlayer = plr
+                        sittingPos = rootPart.Position
+                        break
+                    end
+                end
+            end
+        end
+    end
+    
+    if sittingPlayer then
+        -- Found someone sitting
+        local distance = (sittingPos - Root.Position).Magnitude
+        
+        if distance > 3 then
+            -- Walk to them
+            WalkTo(sittingPos, 2)
+            LookAt(sittingPos + Vector3.new(0, 3, 0))
+            AIState = "walking_to_sit"
+            if SCB then SCB("AI: Walking to sit with " .. sittingPlayer.Name) end
+        else
+            -- Sit down next to them
+            StopMoving()
+            SitDown()
+            AIState = "sitting"
+            AIActionTimer = AISitDuration
+            -- Look at them
+            LookAt(sittingPos + Vector3.new(0, 3, 0))
+        end
+    else
+        -- No one sitting, just explore
+        if AIState ~= "exploring" then
+            AIState = "exploring"
+        end
+        ExploreMode(dt)
+    end
+    
+    if AIState == "sitting" then
+        AIActionTimer = AIActionTimer - dt
+        if AIActionTimer <= 0 then
+            StandUp()
+            AIState = "exploring"
+        end
+    end
+end
+
+-- Flee Mode - Run away from threats
+local function FleeMode(dt)
+    if AIFleeTimer > 0 then
+        AIFleeTimer = AIFleeTimer - dt
+        
+        -- Find direction away from nearest player
+        local fleeDirection = Vector3.new(1, 0, 0)
+        local nearestDist = math.huge
         
         for _, plr in ipairs(Players:GetPlayers()) do
             if plr ~= LP then
@@ -619,89 +799,72 @@ local function UpdateAI(dt)
                 if char and char:FindFirstChild("HumanoidRootPart") then
                     local pos = char.HumanoidRootPart.Position
                     local dist = (pos - Root.Position).Magnitude
-                    if dist > farthestDist then
-                        farthestDist = dist
-                        farthestPos = pos + (pos - Root.Position).Unit * 20
+                    if dist < nearestDist then
+                        nearestDist = dist
+                        fleeDirection = (Root.Position - pos).Unit
                     end
                 end
             end
         end
         
-        WalkTo(farthestPos)
-        return
-    end
-    
-    -- Priority 2: Check for sitting players
-    local sittingPlr, sittingPos = CheckForSitting()
-    if sittingPlr and AISitTimer <= 0 then
-        if AIState ~= "sitting" then
-            AIState = "sitting"
-            if SCB then SCB("AI: Found sitting player - joining!") end
-            AISitTimer = AISitDuration
-        end
+        -- Run away
+        AITargetPosition = Root.Position + fleeDirection * 50
+        WalkTo(AITargetPosition, 5)
+        AIState = "fleeing"
         
-        -- Walk to sitting player
-        local reached = WalkTo(sittingPos)
-        if reached then
-            SitDown()
-            -- Look at the player
-            LookAt(sittingPos + Vector3.new(0, 3, 0))
-        end
-        return
-    end
-    
-    -- Priority 3: Look at interesting things
-    if AITimer > AILookDuration then
-        AITimer = 0
-        ScanForPoints()
-        
-        if #InterestPoints > 0 then
-            local randomPoint = InterestPoints[math.random(#InterestPoints)]
-            AILookTarget = randomPoint.Position
-            AIState = "looking"
-            if SCB then SCB("AI: Looking at something...") end
-        end
-    end
-    
-    if AIState == "looking" and AILookTarget then
-        LookAt(AILookTarget)
-        
-        -- Stop looking after a moment
-        if AITimer > 1 then
-            AIState = "walking"
-        end
-    end
-    
-    -- Priority 4: Wander around
-    if AIState == "idle" or AIState == "walking" then
-        if not AITargetPosition or (Root.Position - AITargetPosition).Magnitude < 5 then
-            -- Pick new random destination
-            AITargetPosition = Root.Position + Vector3.new(
-                math.random(-30, 30),
-                0,
-                math.random(-30, 30)
-            )
-            AIState = "walking"
-            if SCB then SCB("AI: Wandering...") end
-        end
-        
-        WalkTo(AITargetPosition)
+        if SCB then SCB("AI: Fleeing! " .. math.floor(AIFleeTimer) .. "s left") end
+    else
+        -- Done fleeing
+        AIMode = "explore"
+        AIState = "idle"
     end
 end
 
--- Damage detection setup
-local function SetupDamageDetection()
-    if Hum then
-        local lastHealth = Hum.Health
-        
-        Hum.HealthChanged:Connect(function(newHealth)
-            if St.AIControl and newHealth < lastHealth then
-                -- Taking damage!
-                AIFleeTimer = AIFleeDuration
-                if SCB then SCB("AI: Ouch! Fleeing for " .. AIFleeDuration .. " seconds") end
-            end
-            lastHealth = newHealth
-        end)
+-- Main AI update
+local function UpdateAI(dt)
+    if not St.AIControl or not Root or not Hum then return end
+    
+    -- Check for damage (would need health monitoring in real implementation)
+    -- For demo, we'll simulate with a key press or something
+    
+    -- Run current mode
+    if AIMode == "explore" then
+        ExploreMode(dt)
+    elseif AIMode == "follow" then
+        FollowMode(dt)
+    elseif AIMode == "hide" then
+        HideMode(dt)
+    elseif AIMode == "sit" then
+        SitMode(dt)
+    elseif AIMode == "flee" then
+        FleeMode(dt)
+    end
+end
+
+-- Set AI Mode
+local function SetAIMode(mode)
+    AIMode = mode
+    AIState = "idle"
+    StopMoving()
+    StandUp()
+    
+    if mode == "explore" then
+        ScanForHideSpots()
+        if SCB then SCB("AI Mode: Explore - Wandering around") end
+    elseif mode == "follow" then
+        if AITargetPlayer then
+            if SCB then SCB("AI Mode: Follow - Following " .. AITargetPlayer.Name) end
+        else
+            if SCB then SCB("AI Mode: Follow - Select a player first") end
+        end
+    elseif mode == "hide" then
+        ScanForHideSpots()
+        if SCB then SCB("AI Mode: Hide - Finding places to hide") end
+    elseif mode == "sit" then
+        if SCB then SCB("AI Mode: Sit - Looking for sitting players") end
+    elseif mode == "flee" then
+        AIFleeTimer = AIFleeDuration
+        if SCB then SCB("AI Mode: Flee - Running away!") end
     end
 end
 
@@ -715,12 +878,8 @@ local function ToggleAIControl()
         end
         
         -- Initialize AI
-        AIState = "idle"
-        AITimer = 0
-        AIFleeTimer = 0
-        AISitTimer = 0
-        ScanForPoints()
-        SetupDamageDetection()
+        ScanForHideSpots()
+        SetAIMode("explore")
         
         -- Main AI loop
         AIConnection = RunService.Heartbeat:Connect(function(dt)
@@ -728,7 +887,7 @@ local function ToggleAIControl()
         end)
         table.insert(CN, AIConnection)
         
-        if SCB then SCB("AI Control enabled - Watching for damage, sitting players") end
+        if SCB then SCB("AI Control enabled - Mode: Explore") end
         
     elseif AIConnection then
         AIConnection:Disconnect()
@@ -946,6 +1105,114 @@ local function ToggleGravityFlip()
 end
 
 -- ==============================================
+-- PLAYER SELECTOR FOR AI TARGET
+-- ==============================================
+local function CreatePlayerSelector(parent, y)
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, -16, 0, 120)
+    frame.Position = UDim2.new(0, 8, 0, y)
+    frame.BackgroundColor3 = CC
+    frame.BorderSizePixel = 0
+    frame.Parent = parent
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Color = CB
+    stroke.Thickness = 1
+    
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.Position = UDim2.new(0, 0, 0, 0)
+    title.BackgroundColor3 = CC2
+    title.BorderSizePixel = 0
+    title.Text = "Select Target Player"
+    title.TextColor3 = CP
+    title.Font = Enum.Font.GothamBold
+    title.TextSize = 13
+    title.Parent = frame
+    Instance.new("UICorner", title).CornerRadius = UDim.new(0, 6)
+    
+    local listFrame = Instance.new("ScrollingFrame")
+    listFrame.Size = UDim2.new(1, -10, 1, -35)
+    listFrame.Position = UDim2.new(0, 5, 0, 32)
+    listFrame.BackgroundTransparency = 1
+    listFrame.BorderSizePixel = 0
+    listFrame.ScrollBarThickness = 4
+    listFrame.ScrollBarImageColor3 = CA
+    listFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+    listFrame.Parent = frame
+    
+    local layout = Instance.new("UIListLayout", listFrame)
+    layout.SortOrder = Enum.SortOrder.LayoutOrder
+    layout.Padding = UDim.new(0, 2)
+    
+    local function UpdatePlayerList()
+        -- Clear existing
+        for _, child in ipairs(listFrame:GetChildren()) do
+            if child:IsA("TextButton") then
+                child:Destroy()
+            end
+        end
+        
+        local players = {}
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LP then
+                table.insert(players, plr)
+            end
+        end
+        
+        table.sort(players, function(a, b) return a.Name < b.Name end)
+        
+        for _, plr in ipairs(players) do
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(1, 0, 0, 28)
+            btn.BackgroundColor3 = CC2
+            btn.BorderSizePixel = 0
+            btn.Text = plr.Name
+            btn.TextColor3 = CP
+            btn.Font = Enum.Font.Gotham
+            btn.TextSize = 12
+            btn.TextXAlignment = Enum.TextXAlignment.Left
+            btn.Parent = listFrame
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
+            
+            local padding = Instance.new("UIPadding", btn)
+            padding.PaddingLeft = UDim.new(0, 6)
+            
+            btn.MouseEnter:Connect(function()
+                btn.BackgroundColor3 = CO
+            end)
+            
+            btn.MouseLeave:Connect(function()
+                btn.BackgroundColor3 = CC2
+            end)
+            
+            btn.MouseButton1Click:Connect(function()
+                AITargetPlayer = plr
+                if SCB then SCB("AI Target: " .. plr.Name) end
+                
+                -- Highlight selected
+                for _, b in ipairs(listFrame:GetChildren()) do
+                    if b:IsA("TextButton") then
+                        b.BackgroundColor3 = CC2
+                    end
+                end
+                btn.BackgroundColor3 = CA
+            end)
+        end
+        
+        listFrame.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y)
+    end
+    
+    UpdatePlayerList()
+    
+    -- Update when players join/leave
+    AC(Players.PlayerAdded:Connect(UpdatePlayerList))
+    AC(Players.PlayerRemoving:Connect(UpdatePlayerList))
+    
+    return frame
+end
+
+-- ==============================================
 -- UNLOAD FUNCTION
 -- ==============================================
 local function UL()
@@ -999,8 +1266,8 @@ SGui.Parent = PGui
 
 local MF = Instance.new("Frame")
 MF.Name = "MainFrame"
-MF.Size = UDim2.new(0, 520, 0, 750)
-MF.Position = UDim2.new(0.5, -260, 0.5, -375)
+MF.Size = UDim2.new(0, 520, 0, 800)
+MF.Position = UDim2.new(0.5, -260, 0.5, -400)
 MF.BackgroundColor3 = CM
 MF.BorderSizePixel = 0
 MF.ClipsDescendants = true
@@ -1044,7 +1311,7 @@ Foot.BackgroundColor3 = CS
 Foot.BorderSizePixel = 0
 Foot.Parent = MF
 local FLbl = Instance.new("TextLabel")
-FLbl.Text = "Movement & Funny Features + AI"
+FLbl.Text = "Movement & Funny Features + AI Modes"
 FLbl.Size = UDim2.new(1, -10, 1, 0)
 FLbl.Position = UDim2.new(0, 10, 0, 0)
 FLbl.BackgroundTransparency = 1
@@ -1238,6 +1505,31 @@ local function NTog(p, y, label, key, cb)
     if St[key] then Vis(true) end
 end
 
+local function NButton(p, y, label, color, cb)
+    local Btn = Instance.new("TextButton")
+    Btn.Size = UDim2.new(1, -16, 0, 36)
+    Btn.Position = UDim2.new(0, 8, 0, y)
+    Btn.BackgroundColor3 = color or CA
+    Btn.BorderSizePixel = 0
+    Btn.Text = label
+    Btn.TextColor3 = CW
+    Btn.Font = Enum.Font.GothamBold
+    Btn.TextSize = 13
+    Btn.AutoButtonColor = false
+    Btn.Parent = p
+    Instance.new("UICorner", Btn).CornerRadius = UDim.new(0, 6)
+
+    Btn.MouseEnter:Connect(function()
+        TweenService:Create(Btn, TweenInfo.new(0.1), { BackgroundColor3 = Color3.fromRGB(150, 95, 255) }):Play()
+    end)
+
+    Btn.MouseLeave:Connect(function()
+        TweenService:Create(Btn, TweenInfo.new(0.1), { BackgroundColor3 = color or CA }):Play()
+    end)
+
+    Btn.MouseButton1Click:Connect(cb)
+end
+
 local function NSlider(p, y, label, min, max, default, callback, isFloat)
     local Card = Instance.new("Frame")
     Card.Size = UDim2.new(1, -16, 0, 58)
@@ -1407,7 +1699,7 @@ AIStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 AIStatusLabel.Parent = AIStatusFrame
 
 local AIStateValue = Instance.new("TextLabel")
-AIStateValue.Text = "Idle"
+AIStateValue.Text = "Disabled"
 AIStateValue.Size = UDim2.new(1, -80, 1, 0)
 AIStateValue.Position = UDim2.new(0, 72, 0, 0)
 AIStateValue.BackgroundTransparency = 1
@@ -1420,7 +1712,7 @@ AIStateValue.Parent = AIStatusFrame
 -- Update AI state display
 local function UpdateAIStateDisplay()
     if St.AIControl then
-        AIStateValue.Text = AIState:upper()
+        AIStateValue.Text = AIMode:upper() .. " - " .. AIState:upper()
     else
         AIStateValue.Text = "DISABLED"
     end
@@ -1431,27 +1723,67 @@ NTog(AITab, 86, "Enable AI Control", "AIControl", function()
     UpdateAIStateDisplay()
 end)
 
-SH(AITab, 136, "AI SETTINGS")
+SH(AITab, 136, "AI MODES")
 
-NSlider(AITab, 166, "Walk Speed", 8, 32, AIWalkSpeed, function(val) 
+-- Mode selection buttons
+NButton(AITab, 166, "Explore Mode", CA, function()
+    if St.AIControl then
+        SetAIMode("explore")
+        UpdateAIStateDisplay()
+    end
+end)
+
+NButton(AITab, 210, "Follow Mode", Color3.fromRGB(100, 200, 255), function()
+    if St.AIControl then
+        if AITargetPlayer then
+            SetAIMode("follow")
+            UpdateAIStateDisplay()
+        else
+            if SCB then SCB("Select a player to follow first!") end
+        end
+    end
+end)
+
+NButton(AITab, 254, "Hide Mode", Color3.fromRGB(100, 255, 100), function()
+    if St.AIControl then
+        SetAIMode("hide")
+        UpdateAIStateDisplay()
+    end
+end)
+
+NButton(AITab, 298, "Sit Mode", Color3.fromRGB(255, 200, 100), function()
+    if St.AIControl then
+        SetAIMode("sit")
+        UpdateAIStateDisplay()
+    end
+end)
+
+NButton(AITab, 342, "Flee Mode (Test)", Color3.fromRGB(255, 100, 100), function()
+    if St.AIControl then
+        SetAIMode("flee")
+        UpdateAIStateDisplay()
+    end
+end)
+
+-- Player selector
+CreatePlayerSelector(AITab, 386)
+
+SH(AITab, 520, "AI SETTINGS")
+
+NSlider(AITab, 550, "Walk Speed", 8, 32, AIWalkSpeed, function(val) 
     AIWalkSpeed = val 
     if SCB then SCB("AI Walk Speed: " .. val) end
 end, false)
 
-NSlider(AITab, 232, "Scan Radius", 20, 100, AIScanRadius, function(val) 
-    AIScanRadius = val 
-    if SCB then SCB("Scan Radius: " .. val) end
+NSlider(AITab, 616, "Explore Radius", 10, 50, AIExploreRadius, function(val) 
+    AIExploreRadius = val 
+    if SCB then SCB("Explore Radius: " .. val) end
 end, false)
 
-NSlider(AITab, 298, "Flee Duration (s)", 1, 10, AIFleeDuration, function(val) 
-    AIFleeDuration = val 
-    if SCB then SCB("Flee Duration: " .. val .. "s") end
-end, true)
-
-NSlider(AITab, 364, "Sit Duration (s)", 1, 10, AISitDuration, function(val) 
-    AISitDuration = val 
-    if SCB then SCB("Sit Duration: " .. val .. "s") end
-end, true)
+NSlider(AITab, 682, "Follow Distance", 3, 20, AIFollowDistance, function(val) 
+    AIFollowDistance = val 
+    if SCB then SCB("Follow Distance: " .. val) end
+end, false)
 
 -- Settings Tab
 local SettingsTab = NewTab()
@@ -1493,7 +1825,7 @@ StatusValue.Parent = StatusFrame
 SCB = function(s) 
     StatusValue.Text = s 
     if St.AIControl then
-        AIStateValue.Text = AIState:upper()
+        AIStateValue.Text = AIMode:upper() .. " - " .. AIState:upper()
     end
 end
 
@@ -1604,4 +1936,4 @@ end)
 MF.BackgroundTransparency = 1
 TweenService:Create(MF, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 0 }):Play()
 
-print("[Fun Hub] Loaded - AI Control added! Use Creepy Pasta body to walk around")
+print("[Fun Hub] Loaded - AI with multiple modes! Explore, Follow, Hide, Sit, Flee")
