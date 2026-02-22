@@ -3,6 +3,7 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
+local PathfindingService = game:GetService("PathfindingService")
 local WS = game:GetService("Workspace")
 local LP = Players.LocalPlayer
 local PGui = LP:WaitForChild("PlayerGui")
@@ -130,10 +131,16 @@ local AIFleeDuration = 5
 local AISitDuration = 3
 local AILookDuration = 2
 local AIExploreRadius = 30
-local AIHideDistance = 20
 local AIFollowDistance = 10
 
--- Hide spots (will be populated with potential hiding places)
+-- Pathfinding variables
+local Path = nil
+local Waypoints = {}
+local CurrentWaypointIndex = 1
+local LastPathUpdate = 0
+local PathUpdateInterval = 2 -- Update path every 2 seconds
+
+-- Hide spots
 local HideSpots = {}
 
 local function AC(c) table.insert(CN, c) return c end
@@ -425,8 +432,8 @@ local function ToggleCreepyPastaBody()
             
             BodyCurrentAngle = BodyCurrentAngle + (BodyTargetAngle - BodyCurrentAngle) * math.min(dt * 20, 1)
             
-            local currentPos = Root.Position
-            Root.CFrame = CFrame.new(currentPos) * CFrame.Angles(0, BodyCurrentAngle, 0)
+            -- Only rotate the body, don't affect position
+            Root.CFrame = CFrame.new(Root.Position) * CFrame.Angles(0, BodyCurrentAngle, 0)
         end)
         table.insert(CN, CreepyPastaBodyConnection)
         
@@ -446,8 +453,7 @@ local function ToggleCreepyPastaBody()
             end
             
             BodyCurrentAngle = BodyCurrentAngle + (0 - BodyCurrentAngle) * math.min(dt * 20, 1)
-            local currentPos = Root.Position
-            Root.CFrame = CFrame.new(currentPos) * CFrame.Angles(0, BodyCurrentAngle, 0)
+            Root.CFrame = CFrame.new(Root.Position) * CFrame.Angles(0, BodyCurrentAngle, 0)
             
             if math.abs(BodyCurrentAngle) < 0.01 then
                 BodyCurrentAngle = 0
@@ -461,55 +467,10 @@ local function ToggleCreepyPastaBody()
 end
 
 -- ==============================================
--- AI FEATURE - MULTIPLE MODES
+-- AI FEATURE - GROUND MOVEMENT WITH PATHFINDING
 -- ==============================================
 
--- Scan for potential hide spots (corners, behind objects)
-local function ScanForHideSpots()
-    HideSpots = {}
-    
-    -- Look for large objects to hide behind
-    for _, obj in ipairs(WS:GetDescendants()) do
-        if obj:IsA("BasePart") and obj.Size.Magnitude > 5 and not obj.Anchored then
-            -- Found a potential hiding spot
-            table.insert(HideSpots, {
-                Position = obj.Position + (obj.CFrame.LookVector * 3),
-                Object = obj
-            })
-        end
-    end
-    
-    -- Add some random spots if none found
-    if #HideSpots == 0 then
-        for i = 1, 5 do
-            table.insert(HideSpots, {
-                Position = Root.Position + Vector3.new(
-                    math.random(-30, 30),
-                    0,
-                    math.random(-30, 30)
-                )
-            })
-        end
-    end
-end
-
--- Find nearest hide spot
-local function FindNearestHideSpot()
-    local nearest = nil
-    local nearestDist = math.huge
-    
-    for _, spot in ipairs(HideSpots) do
-        local dist = (spot.Position - Root.Position).Magnitude
-        if dist < nearestDist and dist > 5 then
-            nearestDist = dist
-            nearest = spot.Position
-        end
-    end
-    
-    return nearest
-end
-
--- Look at target using body rotation
+-- Look at target using body rotation (for looking where you're walking)
 local function LookAt(targetPos)
     if not Root or not targetPos then return end
     
@@ -520,63 +481,97 @@ local function LookAt(targetPos)
     BodyTargetAngle = angle
 end
 
--- Look around at nearby objects
-local function LookAround()
-    -- Find something interesting to look at
-    local lookTargets = {}
+-- Create path to target using Roblox PathfindingService
+local function CreatePathTo(targetPos)
+    if not Root or not targetPos then return nil end
     
-    -- Look at other players
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then
-            local char = plr.Character
-            if char and char:FindFirstChild("HumanoidRootPart") then
-                table.insert(lookTargets, char.HumanoidRootPart.Position)
-            end
-        end
-    end
+    local path = PathfindingService:CreatePath({
+        AgentRadius = 2,
+        AgentHeight = 5,
+        AgentCanJump = true,
+        AgentCanClimb = true,
+        Costs = {
+            Water = 5,
+            -- Add other costs as needed
+        }
+    })
     
-    -- Look at large objects
-    for _, obj in ipairs(WS:GetDescendants()) do
-        if obj:IsA("BasePart") and obj.Size.Magnitude > 10 then
-            table.insert(lookTargets, obj.Position)
-        end
-    end
+    local success, errorMessage = pcall(function()
+        path:ComputeAsync(Root.Position, targetPos)
+    end)
     
-    if #lookTargets > 0 then
-        AILookTarget = lookTargets[math.random(#lookTargets)]
-        LookAt(AILookTarget)
-        AILookTimer = AILookDuration
+    if success and path.Status == Enum.PathStatus.Success then
+        return path
+    else
+        return nil
     end
 end
 
--- Walk to target
-local function WalkTo(targetPos, stopDistance)
-    stopDistance = stopDistance or 3
-    if not Root or not targetPos then return false end
+-- Follow path using Humanoid:MoveTo
+local function FollowPath(path)
+    if not path or not Hum then return false end
     
-    local direction = (targetPos - Root.Position).Unit
+    local waypoints = path:GetWaypoints()
+    if #waypoints == 0 then return false end
+    
+    -- Move to first waypoint
+    Hum:MoveTo(waypoints[1].Position)
+    
+    -- Connect to path waypoint reached
+    local connection
+    connection = path.Blocked:Connect(function(blockedWaypointIndex)
+        -- Path blocked, recalculate
+        if connection then connection:Disconnect() end
+        if SCB then SCB("Path blocked, recalculating...") end
+        return false
+    end)
+    
+    table.insert(CN, connection)
+    
+    return true
+end
+
+-- Walk to target using pathfinding
+local function WalkToTarget(targetPos)
+    if not Root or not targetPos or not Hum then return false end
+    
     local distance = (targetPos - Root.Position).Magnitude
     
-    -- Look in the direction we're walking
-    LookAt(targetPos)
-    
-    -- Move using BodyVelocity for smooth movement
-    if not BodyVelocity then
-        BodyVelocity = Instance.new("BodyVelocity")
-        BodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
-        BodyVelocity.P = 1e6
-        BodyVelocity.Parent = Root
+    -- If close enough, just move directly
+    if distance < 10 then
+        Hum:MoveTo(targetPos)
+        -- Look at where we're going
+        LookAt(targetPos)
+        return distance <= 3 -- Return true if reached
     end
     
-    BodyVelocity.Velocity = direction * AIWalkSpeed
+    -- Update path every few seconds
+    local currentTime = tick()
+    if currentTime - LastPathUpdate > PathUpdateInterval or not Path then
+        Path = CreatePathTo(targetPos)
+        LastPathUpdate = currentTime
+        
+        if Path then
+            FollowPath(Path)
+            if SCB then SCB("Path found!") end
+        else
+            -- Fallback to direct movement
+            Hum:MoveTo(targetPos)
+            if SCB then SCB("No path, going direct") end
+        end
+    end
     
-    return distance <= stopDistance
+    -- Always look at target
+    LookAt(targetPos)
+    
+    -- Check if we're close enough
+    return distance <= 3
 end
 
 -- Stop moving
 local function StopMoving()
-    if BodyVelocity then
-        BodyVelocity.Velocity = Vector3.zero
+    if Hum then
+        Hum:MoveTo(Root.Position) -- Stop by moving to current position
     end
 end
 
@@ -612,11 +607,18 @@ local function ExploreMode(dt)
     end
     
     if AIState == "walking" then
-        local reached = WalkTo(AITargetPosition)
+        local reached = WalkToTarget(AITargetPosition)
         
-        -- Look around while walking
+        -- Look around occasionally
         if AILookTimer <= 0 then
-            LookAround()
+            -- Look at something random
+            AILookTarget = Root.Position + Vector3.new(
+                math.random(-20, 20),
+                0,
+                math.random(-20, 20)
+            )
+            LookAt(AILookTarget)
+            AILookTimer = AILookDuration
         else
             AILookTimer = AILookTimer - dt
         end
@@ -624,7 +626,6 @@ local function ExploreMode(dt)
         if reached then
             AIState = "looking"
             AIActionTimer = 2
-            LookAround()
         end
     end
     
@@ -636,7 +637,7 @@ local function ExploreMode(dt)
     end
 end
 
--- Follow Mode - Follow selected player
+-- Follow Mode - Follow selected player with pathfinding
 local function FollowMode(dt)
     if not AITargetPlayer then
         if SCB then SCB("AI: No target to follow") end
@@ -653,12 +654,12 @@ local function FollowMode(dt)
     local targetPos = char.HumanoidRootPart.Position
     local distance = (targetPos - Root.Position).Magnitude
     
-    -- Look at the target
+    -- Always look at the target
     LookAt(targetPos + Vector3.new(0, 3, 0))
     
     if distance > AIFollowDistance then
-        -- Follow the target
-        WalkTo(targetPos, AIFollowDistance)
+        -- Follow the target using pathfinding
+        WalkToTarget(targetPos)
         AIState = "following"
         if SCB then SCB("AI: Following " .. AITargetPlayer.Name) end
     else
@@ -671,55 +672,45 @@ end
 -- Hide Mode - Find and hide behind objects
 local function HideMode(dt)
     if AIState == "idle" then
-        -- Find a hiding spot
-        AIHideSpot = FindNearestHideSpot()
-        if AIHideSpot then
-            AITargetPosition = AIHideSpot
-            AIState = "hiding"
-            if SCB then SCB("AI: Hiding...") end
-        else
-            -- No hiding spots, just crouch
-            AIState = "crouching"
-        end
+        -- Find a hiding spot (simplified)
+        AIHideSpot = Root.Position + Vector3.new(
+            math.random(-20, 20),
+            0,
+            math.random(-20, 20)
+        )
+        AITargetPosition = AIHideSpot
+        AIState = "hiding"
+        if SCB then SCB("AI: Hiding...") end
     end
     
     if AIState == "hiding" then
-        local reached = WalkTo(AITargetPosition, 2)
+        local reached = WalkToTarget(AITargetPosition)
         
         if reached then
             -- Found hiding spot, crouch and look around
             StopMoving()
             AIState = "hidden"
             AIActionTimer = 5
-            LookAround()
         end
     end
     
     if AIState == "hidden" then
         AIActionTimer = AIActionTimer - dt
+        
+        -- Look around while hidden
         if AILookTimer <= 0 then
-            -- Look around while hidden
-            LookAround()
+            AILookTarget = Root.Position + Vector3.new(
+                math.random(-10, 10),
+                0,
+                math.random(-10, 10)
+            )
+            LookAt(AILookTarget)
+            AILookTimer = 1
         else
             AILookTimer = AILookTimer - dt
         end
         
-        -- Check if someone is nearby
-        for _, plr in ipairs(Players:GetPlayers()) do
-            if plr ~= LP then
-                local char = plr.Character
-                if char and char:FindFirstChild("HumanoidRootPart") then
-                    local dist = (char.HumanoidRootPart.Position - Root.Position).Magnitude
-                    if dist < 10 then
-                        -- Someone is close, stay hidden
-                        if SCB then SCB("AI: Someone nearby - staying hidden") end
-                    end
-                end
-            end
-        end
-        
         if AIActionTimer <= 0 then
-            -- Time to find a new hiding spot
             AIState = "idle"
         end
     end
@@ -754,7 +745,7 @@ local function SitMode(dt)
         
         if distance > 3 then
             -- Walk to them
-            WalkTo(sittingPos, 2)
+            WalkToTarget(sittingPos)
             LookAt(sittingPos + Vector3.new(0, 3, 0))
             AIState = "walking_to_sit"
             if SCB then SCB("AI: Walking to sit with " .. sittingPlayer.Name) end
@@ -779,7 +770,7 @@ local function SitMode(dt)
         AIActionTimer = AIActionTimer - dt
         if AIActionTimer <= 0 then
             StandUp()
-            AIState = "exploring"
+            AIState = "idle"
         end
     end
 end
@@ -809,7 +800,7 @@ local function FleeMode(dt)
         
         -- Run away
         AITargetPosition = Root.Position + fleeDirection * 50
-        WalkTo(AITargetPosition, 5)
+        WalkToTarget(AITargetPosition)
         AIState = "fleeing"
         
         if SCB then SCB("AI: Fleeing! " .. math.floor(AIFleeTimer) .. "s left") end
@@ -823,9 +814,6 @@ end
 -- Main AI update
 local function UpdateAI(dt)
     if not St.AIControl or not Root or not Hum then return end
-    
-    -- Check for damage (would need health monitoring in real implementation)
-    -- For demo, we'll simulate with a key press or something
     
     -- Run current mode
     if AIMode == "explore" then
@@ -847,9 +835,9 @@ local function SetAIMode(mode)
     AIState = "idle"
     StopMoving()
     StandUp()
+    Path = nil -- Reset path
     
     if mode == "explore" then
-        ScanForHideSpots()
         if SCB then SCB("AI Mode: Explore - Wandering around") end
     elseif mode == "follow" then
         if AITargetPlayer then
@@ -858,7 +846,6 @@ local function SetAIMode(mode)
             if SCB then SCB("AI Mode: Follow - Select a player first") end
         end
     elseif mode == "hide" then
-        ScanForHideSpots()
         if SCB then SCB("AI Mode: Hide - Finding places to hide") end
     elseif mode == "sit" then
         if SCB then SCB("AI Mode: Sit - Looking for sitting players") end
@@ -876,9 +863,18 @@ local function ToggleAIControl()
             St.Fly = false
             ToggleFly()
         end
+        if St.Float then
+            St.Float = false
+            ToggleFloat()
+        end
+        
+        -- Reset humanoid state
+        if Hum then
+            Hum.PlatformStand = false
+            Hum.WalkSpeed = 16
+        end
         
         -- Initialize AI
-        ScanForHideSpots()
         SetAIMode("explore")
         
         -- Main AI loop
@@ -897,6 +893,7 @@ local function ToggleAIControl()
         StopMoving()
         StandUp()
         BodyTargetAngle = 0
+        Path = nil
         
         if SCB then SCB("AI Control disabled") end
     end
@@ -1936,4 +1933,4 @@ end)
 MF.BackgroundTransparency = 1
 TweenService:Create(MF, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 0 }):Play()
 
-print("[Fun Hub] Loaded - AI with multiple modes! Explore, Follow, Hide, Sit, Flee")
+print("[Fun Hub] Loaded - AI now walks on ground with pathfinding!")
