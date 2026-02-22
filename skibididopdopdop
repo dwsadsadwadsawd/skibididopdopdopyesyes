@@ -70,7 +70,8 @@ local CN = {} -- Connections
 local SCB = nil -- Status callback
 local LagInterval = 0.1
 local WifiLagStrength = 10
-local AnchorIntervalTime = 0.5
+local AnchorIntervalOnTime = 0.3
+local AnchorIntervalOffTime = 0.3
 local SpinSpeed = 10
 local FlySpeed = 50
 local WalkSpeedValue = 50
@@ -94,7 +95,7 @@ local function AC(c) table.insert(CN, c) return c end
 -- MOVEMENT FEATURES
 -- ==============================================
 
--- Fly Function - Improved with smoother controls
+-- Fly Function
 local function ToggleFly()
     if St.Fly then
         if BodyVelocity then BodyVelocity:Destroy() end
@@ -193,7 +194,7 @@ local function ToggleInfiniteJump()
 end
 
 -- ==============================================
--- IMPROVED FAKE LAG (More believable)
+-- IMPROVED FAKE LAG
 -- ==============================================
 local function ToggleFakeLag()
     if St.FakeLag then
@@ -206,11 +207,9 @@ local function ToggleFakeLag()
             
             lagTimer = lagTimer + deltaTime
             
-            -- Create a pattern: 0.5 sec normal, 0.3 sec lag, repeat
             if not isLagging and lagTimer > 0.5 then
                 isLagging = true
                 lagTimer = 0
-                -- Freeze everything temporarily
                 if BodyVelocity then
                     BodyVelocity.Velocity = Vector3.zero
                 end
@@ -219,17 +218,15 @@ local function ToggleFakeLag()
                 lagTimer = 0
             end
             
-            -- During lag, delay all updates
             if isLagging then
-                wait(LagInterval * 0.5) -- Micro-freeze during lag
+                wait(LagInterval * 0.5)
             end
         end)
         table.insert(CN, FakeLagConnection)
         
-        -- Also add network lag simulation
         local networkLag = RunService.Heartbeat:Connect(function()
             if not St.FakeLag then return end
-            if math.random() < 0.3 then -- 30% chance to drop a packet
+            if math.random() < 0.3 then
                 wait(LagInterval * 0.2)
             end
         end)
@@ -242,7 +239,7 @@ local function ToggleFakeLag()
 end
 
 -- ==============================================
--- WIFI LAG (Rubberbanding)
+-- WIFI LAG
 -- ==============================================
 local function ToggleWifiLag()
     if St.WifiLag then
@@ -254,17 +251,14 @@ local function ToggleWifiLag()
             
             rubberBandAmount = rubberBandAmount + 1
             
-            -- Every 10 frames, do a rubberband effect
             if rubberBandAmount >= 10 then
                 rubberBandAmount = 0
                 if lastPos then
-                    -- Snap back to previous position (rubberbanding)
                     Root.CFrame = CFrame.new(lastPos)
                 end
             end
             
-            -- Random teleports within range (wifi lag spikes)
-            if math.random() < 0.2 then -- 20% chance
+            if math.random() < 0.2 then
                 local offset = Vector3.new(
                     math.random(-WifiLagStrength, WifiLagStrength),
                     math.random(-WifiLagStrength/2, WifiLagStrength/2),
@@ -283,19 +277,35 @@ local function ToggleWifiLag()
 end
 
 -- ==============================================
--- ANCHOR INTERVAL (Flickering anchor)
+-- ANCHOR INTERVAL WITH SEPARATE ON/OFF TIMERS
 -- ==============================================
 local function ToggleAnchorInterval()
     if St.AnchorInterval then
         local anchored = false
+        local lastToggle = tick()
+        
         AnchorIntervalConnection = RunService.Heartbeat:Connect(function()
             if not St.AnchorInterval or not Root then return end
             
-            anchored = not anchored
-            Root.Anchored = anchored
-            wait(AnchorIntervalTime)
+            local currentTime = tick()
+            local timeSinceToggle = currentTime - lastToggle
+            
+            if anchored and timeSinceToggle >= AnchorIntervalOnTime then
+                -- Switch to off
+                anchored = false
+                Root.Anchored = false
+                lastToggle = currentTime
+                if SCB then SCB("Anchor: OFF") end
+            elseif not anchored and timeSinceToggle >= AnchorIntervalOffTime then
+                -- Switch to on
+                anchored = true
+                Root.Anchored = true
+                lastToggle = currentTime
+                if SCB then SCB("Anchor: ON") end
+            end
         end)
         table.insert(CN, AnchorIntervalConnection)
+        
     elseif AnchorIntervalConnection then
         AnchorIntervalConnection:Disconnect()
         AnchorIntervalConnection = nil
@@ -338,7 +348,7 @@ local function ToggleSitSpin()
 end
 
 -- ==============================================
--- FLOAT (Hover in place)
+-- FLOAT
 -- ==============================================
 local function ToggleFloat()
     if St.Float then
@@ -346,10 +356,8 @@ local function ToggleFloat()
         bf.Force = Vector3.new(0, Char:GetMass() * 196.2, 0)
         bf.Parent = Root
         
-        -- Add slight drift for realism
         local driftConnection = RunService.Heartbeat:Connect(function()
             if not St.Float or not Root then return end
-            -- Small random movement
             Root.CFrame = Root.CFrame * CFrame.new(
                 math.random(-1, 1) * 0.1,
                 math.sin(tick()) * 0.05,
@@ -365,15 +373,13 @@ local function ToggleFloat()
 end
 
 -- ==============================================
--- ANTI GRAVITY (Makes objects float)
+-- ANTI GRAVITY
 -- ==============================================
 local function ToggleAntiGravity()
     if St.AntiGravity then
-        -- Store original gravity
         OriginalGravity = WS.Gravity
         WS.Gravity = 0
         
-        -- Make all unanchored parts float
         for _, part in ipairs(WS:GetDescendants()) do
             if part:IsA("BasePart") and not part.Anchored and part ~= Root then
                 part.Velocity = Vector3.new(0, 10, 0)
@@ -402,7 +408,6 @@ local function ToggleReverseControls()
         ReverseControlsConnection = RunService.Heartbeat:Connect(function()
             if not St.ReverseControls or not BodyVelocity then return end
             
-            -- Reverse movement directions
             local moveDir = Vector3.zero
             if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir - Camera.CFrame.LookVector * FlySpeed end
             if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir + Camera.CFrame.LookVector * FlySpeed end
@@ -412,8 +417,6 @@ local function ToggleReverseControls()
             if St.Fly and BodyVelocity then
                 BodyVelocity.Velocity = moveDir
             elseif Hum then
-                -- For non-fly mode, we need to modify the humanoid's movement
-                -- This is trickier, but we can use a body velocity as well
                 if not BodyVelocity then
                     BodyVelocity = Instance.new("BodyVelocity")
                     BodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
@@ -435,18 +438,16 @@ local function ToggleReverseControls()
 end
 
 -- ==============================================
--- DRUNK MODE (Wobbly movement)
+-- DRUNK MODE
 -- ==============================================
 local function ToggleDrunkMode()
     if St.DrunkMode then
         DrunkModeConnection = RunService.Heartbeat:Connect(function()
             if not St.DrunkMode or not Root then return end
             
-            -- Wobbly rotation
             local wobble = math.sin(tick() * 5) * 0.1
             Root.CFrame = Root.CFrame * CFrame.Angles(wobble, wobble * 2, wobble)
             
-            -- Wobbly movement if flying
             if St.Fly and BodyVelocity then
                 local currentVel = BodyVelocity.Velocity
                 BodyVelocity.Velocity = currentVel + Vector3.new(
@@ -464,7 +465,7 @@ local function ToggleDrunkMode()
 end
 
 -- ==============================================
--- RUBBER BAND (Snap back to position)
+-- RUBBER BAND
 -- ==============================================
 local function ToggleRubberBand()
     if St.RubberBand then
@@ -474,15 +475,13 @@ local function ToggleRubberBand()
         RubberBandConnection = RunService.Heartbeat:Connect(function()
             if not St.RubberBand or not Root or not startPos then return end
             
-            -- Calculate how far from start position
             local dist = (Root.Position - startPos).Magnitude
             if dist > 20 then
-                -- Pull back toward start
                 local direction = (startPos - Root.Position).Unit
                 Root.CFrame = CFrame.new(Root.Position + direction * dist * bandStrength)
-                bandStrength = bandStrength + 0.05 -- Increase pull strength
+                bandStrength = bandStrength + 0.05
             else
-                bandStrength = 0.1 -- Reset when close
+                bandStrength = 0.1
             end
         end)
         table.insert(CN, RubberBandConnection)
@@ -502,7 +501,6 @@ local function ToggleScreenShake()
         ScreenShakeConnection = RunService.RenderStepped:Connect(function()
             if not St.ScreenShake or not Camera then return end
             
-            -- Random shake offset
             local shake = Vector3.new(
                 math.random(-1, 1) * 0.5,
                 math.random(-1, 1) * 0.5,
@@ -510,7 +508,6 @@ local function ToggleScreenShake()
             )
             Camera.CFrame = originalCFrame * CFrame.new(shake)
             
-            -- Update original position occasionally
             if tick() % 2 < 0.1 then
                 originalCFrame = Camera.CFrame
             end
@@ -530,7 +527,6 @@ local function ToggleGravityFlip()
         OriginalGravity = WS.Gravity
         WS.Gravity = -WS.Gravity or -196.2
         
-        -- Flip character orientation
         if Root then
             Root.CFrame = Root.CFrame * CFrame.Angles(math.pi, 0, 0)
         end
@@ -547,7 +543,6 @@ end
 -- UNLOAD FUNCTION
 -- ==============================================
 local function UL()
-    -- Turn off all features
     St.Fly = false; ToggleFly()
     St.Noclip = false; ToggleNoclip()
     St.Walkspeed = false; SetWalkspeed()
@@ -566,18 +561,15 @@ local function UL()
     St.ScreenShake = false; ToggleScreenShake()
     St.GravityFlip = false; ToggleGravityFlip()
     
-    -- Clean up connections
     for _, c in ipairs(CN) do
         pcall(function() c:Disconnect() end)
     end
     CN = {}
     
-    -- Clean up GUI
     if PGui:FindFirstChild("FunHub") then
         PGui.FunHub:Destroy()
     end
     
-    -- Reset gravity
     WS.Gravity = 196.2
     
     print("[Fun Hub] Unloaded")
@@ -596,8 +588,8 @@ SGui.Parent = PGui
 
 local MF = Instance.new("Frame")
 MF.Name = "MainFrame"
-MF.Size = UDim2.new(0, 520, 0, 550)
-MF.Position = UDim2.new(0.5, -260, 0.5, -275)
+MF.Size = UDim2.new(0, 520, 0, 600)
+MF.Position = UDim2.new(0.5, -260, 0.5, -300)
 MF.BackgroundColor3 = CM
 MF.BorderSizePixel = 0
 MF.ClipsDescendants = true
@@ -832,11 +824,10 @@ local function NTog(p, y, label, key, cb)
         end
     end)
 
-    -- Set initial state
     if St[key] then Vis(true) end
 end
 
-local function NSlider(p, y, label, min, max, default, callback)
+local function NSlider(p, y, label, min, max, default, callback, isFloat)
     local Card = Instance.new("Frame")
     Card.Size = UDim2.new(1, -16, 0, 58)
     Card.Position = UDim2.new(0, 8, 0, y)
@@ -904,15 +895,16 @@ local function NSlider(p, y, label, min, max, default, callback)
         local rel = (xPos - Track.AbsolutePosition.X) / Track.AbsoluteSize.X
         rel = math.clamp(rel, 0, 1)
         value = min + (rel * (max - min))
-        -- Round to 2 decimal places for lag interval
-        if min < 1 then
+        
+        if isFloat then
             value = math.floor(value * 100) / 100
         else
             value = math.floor(value)
         end
+        
         Fill.Size = UDim2.new(rel, 0, 1, 0)
         Thumb.Position = UDim2.new(rel, 0, 0.5, 0)
-        Val.Text = tostring(value)
+        Val.Text = tostring(value) .. (isFloat and "s" or "")
         if callback then callback(value) end
     end
 
@@ -974,7 +966,7 @@ NTog(FunnyTab, 414, "Rubber Band", "RubberBand", function() ToggleRubberBand() e
 NTog(FunnyTab, 456, "Screen Shake", "ScreenShake", function() ToggleScreenShake() end)
 NTog(FunnyTab, 498, "Gravity Flip", "GravityFlip", function() ToggleGravityFlip() end)
 
--- Settings Tab (for sliders)
+-- Settings Tab
 local SettingsTab = NewTab()
 table.insert(Tabs, SettingsTab)
 SH(SettingsTab, 8, "SETTINGS")
@@ -1013,37 +1005,47 @@ StatusValue.TextXAlignment = Enum.TextXAlignment.Left
 StatusValue.Parent = StatusFrame
 SCB = function(s) StatusValue.Text = s end
 
--- Sliders
-NSlider(SettingsTab, 86, "Fly Speed", 10, 200, FlySpeed, function(val) 
+-- Main Settings
+SH(SettingsTab, 86, "MAIN SETTINGS")
+NSlider(SettingsTab, 116, "Fly Speed", 10, 200, FlySpeed, function(val) 
     FlySpeed = val 
-    if SCB then SCB("Fly Speed: " .. val) end
 end)
 
-NSlider(SettingsTab, 152, "Fake Lag Duration", 0.01, 0.5, LagInterval, function(val) 
+NSlider(SettingsTab, 182, "Fake Lag Duration", 0.01, 0.5, LagInterval, function(val) 
     LagInterval = val 
-    if SCB then SCB("Lag Duration: " .. val .. "s") end
-end)
+end, true)
 
-NSlider(SettingsTab, 218, "WiFi Lag Strength", 1, 30, WifiLagStrength, function(val) 
+NSlider(SettingsTab, 248, "WiFi Lag Strength", 1, 30, WifiLagStrength, function(val) 
     WifiLagStrength = val 
-    if SCB then SCB("WiFi Strength: " .. val) end
 end)
 
-NSlider(SettingsTab, 284, "Spin Speed", 1, 30, SpinSpeed, function(val) 
+-- ANCHOR INTERVAL SETTINGS (Two separate sliders)
+SH(SettingsTab, 314, "ANCHOR INTERVAL")
+
+NSlider(SettingsTab, 344, "Anchor ON Time", 0.1, 2.0, AnchorIntervalOnTime, function(val) 
+    AnchorIntervalOnTime = val 
+    if SCB then SCB("Anchor ON: " .. val .. "s") end
+end, true)
+
+NSlider(SettingsTab, 410, "Anchor OFF Time", 0.1, 2.0, AnchorIntervalOffTime, function(val) 
+    AnchorIntervalOffTime = val 
+    if SCB then SCB("Anchor OFF: " .. val .. "s") end
+end, true)
+
+-- More Settings
+SH(SettingsTab, 476, "MORE SETTINGS")
+NSlider(SettingsTab, 506, "Spin Speed", 1, 30, SpinSpeed, function(val) 
     SpinSpeed = val 
-    if SCB then SCB("Spin Speed: " .. val) end
 end)
 
-NSlider(SettingsTab, 350, "Walkspeed Value", 16, 200, WalkSpeedValue, function(val) 
+NSlider(SettingsTab, 572, "Walkspeed Value", 16, 200, WalkSpeedValue, function(val) 
     WalkSpeedValue = val 
     if St.Walkspeed then SetWalkspeed() end
-    if SCB then SCB("Walkspeed: " .. val) end
 end)
 
-NSlider(SettingsTab, 416, "Jump Power", 50, 200, JumpPowerValue, function(val) 
+NSlider(SettingsTab, 638, "Jump Power", 50, 200, JumpPowerValue, function(val) 
     JumpPowerValue = val 
     if St.Jumppower then SetJumppower() end
-    if SCB then SCB("Jump Power: " .. val) end
 end)
 
 -- Build sidebar tabs
@@ -1094,4 +1096,4 @@ end)
 MF.BackgroundTransparency = 1
 TweenService:Create(MF, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 0 }):Play()
 
-print("[Fun Hub] Loaded - Movement & Funny Features")
+print("[Fun Hub] Loaded - Anchor Interval with separate ON/OFF sliders!")
