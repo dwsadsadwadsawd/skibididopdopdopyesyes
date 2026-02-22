@@ -3,10 +3,6 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
-local TeleportService = game:GetService("TeleportService")
-local Lighting = game:GetService("Lighting")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Debris = game:GetService("Debris")
 local WS = game:GetService("Workspace")
 local LP = Players.LocalPlayer
 local PGui = LP:WaitForChild("PlayerGui")
@@ -52,14 +48,7 @@ local St = {
     Jumppower = false,
     InfiniteJump = false,
     
-    -- Visual
-    ESP = false,
-    Chams = false,
-    Tracers = false,
-    NameTags = false,
-    FullBright = false,
-    
-    -- Fun/Troll
+    -- Funny/Troll
     FakeLag = false,
     WifiLag = false,
     AnchorInterval = false,
@@ -67,29 +56,18 @@ local St = {
     SitSpin = false,
     Float = false,
     AntiGravity = false,
-    
-    -- Emotes/Tools
-    SitEmote = false,
-    DanceEmote = false,
-    PointEmote = false,
-    WaveEmote = false,
-    
-    -- Other
-    AntiAfk = false,
-    GodMode = false,
-    NoCooldown = false,
-    InfYeld = false,
+    ReverseControls = false,
+    DrunkMode = false,
+    RubberBand = false,
+    ScreenShake = false,
+    GravityFlip = false,
 }
 
 -- ==============================================
 -- VARIABLES
 -- ==============================================
 local CN = {} -- Connections
-local EO = {} -- ESP objects
-local FL = {} -- Fly/Body objects
 local SCB = nil -- Status callback
-local SelectedTarget = nil
-local TargetList = {}
 local LagInterval = 0.1
 local WifiLagStrength = 10
 local AnchorIntervalTime = 0.5
@@ -103,58 +81,20 @@ local SpinConnection = nil
 local FakeLagConnection = nil
 local WifiLagConnection = nil
 local AnchorIntervalConnection = nil
-local AntiAfkConnection = nil
 local InfiniteJumpConnection = nil
+local ReverseControlsConnection = nil
+local DrunkModeConnection = nil
+local RubberBandConnection = nil
+local ScreenShakeConnection = nil
+local OriginalGravity = nil
 
--- ==============================================
--- UTILITY FUNCTIONS
--- ==============================================
 local function AC(c) table.insert(CN, c) return c end
-
-local function SafeTeleport(pos)
-    local success = pcall(function()
-        if Root then
-            Root.CFrame = CFrame.new(pos)
-        end
-    end)
-    return success
-end
-
-local function GetPlayers()
-    local list = {}
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then
-            table.insert(list, plr)
-        end
-    end
-    return list
-end
-
-local function GetCharacter(plr)
-    return plr.Character
-end
-
-local function GetRoot(plr)
-    local char = GetCharacter(plr)
-    if char then
-        return char:FindFirstChild("HumanoidRootPart")
-    end
-    return nil
-end
-
-local function GetHumanoid(plr)
-    local char = GetCharacter(plr)
-    if char then
-        return char:FindFirstChild("Humanoid")
-    end
-    return nil
-end
 
 -- ==============================================
 -- MOVEMENT FEATURES
 -- ==============================================
 
--- Fly Function
+-- Fly Function - Improved with smoother controls
 local function ToggleFly()
     if St.Fly then
         if BodyVelocity then BodyVelocity:Destroy() end
@@ -253,195 +193,86 @@ local function ToggleInfiniteJump()
 end
 
 -- ==============================================
--- VISUAL FEATURES
+-- IMPROVED FAKE LAG (More believable)
 -- ==============================================
-
--- ESP Functions
-local function GetPlayerColor(plr)
-    local team = plr.Team
-    if team and team.TeamColor then
-        return team.TeamColor.Color
-    end
-    return CA
-end
-
-local function CreateESP(plr)
-    if EO[plr] then return end
-    
-    local char = GetCharacter(plr)
-    local root = GetRoot(plr)
-    if not char or not root then return end
-    
-    local color = GetPlayerColor(plr)
-    local espData = {}
-    
-    if St.ESP then
-        -- Billboard GUI
-        local bb = Instance.new("BillboardGui")
-        bb.Name = "UniversalESP"
-        bb.Size = UDim2.new(0, 150, 0, 50)
-        bb.StudsOffset = Vector3.new(0, 3, 0)
-        bb.AlwaysOnTop = true
-        bb.Parent = root
-        
-        local frame = Instance.new("Frame", bb)
-        frame.Size = UDim2.new(1, 0, 1, 0)
-        frame.BackgroundColor3 = CBL
-        frame.BackgroundTransparency = 0.3
-        frame.BorderSizePixel = 0
-        Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 4)
-        
-        local nameLabel = Instance.new("TextLabel", frame)
-        nameLabel.Size = UDim2.new(1, -4, 0.5, -2)
-        nameLabel.Position = UDim2.new(0, 2, 0, 2)
-        nameLabel.BackgroundTransparency = 1
-        nameLabel.Text = plr.Name
-        nameLabel.TextColor3 = color
-        nameLabel.TextStrokeTransparency = 0
-        nameLabel.TextStrokeColor3 = CBL
-        nameLabel.Font = Enum.Font.GothamBold
-        nameLabel.TextSize = 14
-        
-        local distLabel = Instance.new("TextLabel", frame)
-        distLabel.Size = UDim2.new(1, -4, 0.5, -2)
-        distLabel.Position = UDim2.new(0, 2, 0.5, 0)
-        distLabel.BackgroundTransparency = 1
-        distLabel.Text = "Distance: 0"
-        distLabel.TextColor3 = CP
-        distLabel.TextStrokeTransparency = 0
-        distLabel.TextStrokeColor3 = CBL
-        distLabel.Font = Enum.Font.Gotham
-        distLabel.TextSize = 11
-        
-        espData.bb = bb
-        espData.nameLabel = nameLabel
-        espData.distLabel = distLabel
-    end
-    
-    if St.Chams then
-        local highlight = Instance.new("Highlight")
-        highlight.Name = "UniversalChams"
-        highlight.FillColor = color
-        highlight.FillTransparency = 0.5
-        highlight.OutlineColor = CW
-        highlight.OutlineTransparency = 0
-        highlight.Parent = char
-        espData.highlight = highlight
-    end
-    
-    if St.Tracers then
-        local tracerConnection = RunService.RenderStepped:Connect(function()
-            if not St.Tracers or not root or not Camera then
-                if tracerConnection then tracerConnection:Disconnect() end
-                return
-            end
-            
-            local screenPos, onScreen = Camera:WorldToViewportPoint(root.Position)
-            if onScreen then
-                -- Draw tracer logic here (would require Drawing library which may not be available)
-            end
-        end)
-        espData.tracerConnection = tracerConnection
-        table.insert(CN, tracerConnection)
-    end
-    
-    -- Distance updater
-    local distConnection = RunService.Heartbeat:Connect(function()
-        if not St.ESP or not root or not Root or not espData.distLabel then
-            if distConnection then distConnection:Disconnect() end
-            return
-        end
-        local dist = (root.Position - Root.Position).Magnitude
-        espData.distLabel.Text = string.format("Distance: %.1f", dist)
-    end)
-    espData.distConnection = distConnection
-    table.insert(CN, distConnection)
-    
-    EO[plr] = espData
-end
-
-local function RemoveESP(plr)
-    local espData = EO[plr]
-    if not espData then return end
-    
-    if espData.bb then espData.bb:Destroy() end
-    if espData.highlight then espData.highlight:Destroy() end
-    if espData.tracerConnection then espData.tracerConnection:Disconnect() end
-    if espData.distConnection then espData.distConnection:Disconnect() end
-    
-    EO[plr] = nil
-end
-
-local function RefreshESP()
-    -- Clean up invalid
-    for plr in pairs(EO) do
-        if not plr or not plr.Parent then
-            RemoveESP(plr)
-        end
-    end
-    
-    -- Toggle based on states
-    if not St.ESP and not St.Chams and not St.Tracers then
-        for plr in pairs(EO) do
-            RemoveESP(plr)
-        end
-        return
-    end
-    
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP then
-            CreateESP(plr)
-        end
-    end
-end
-
--- Fullbright
-local function ToggleFullBright()
-    if St.FullBright then
-        Lighting.Ambient = Color3.fromRGB(255, 255, 255)
-        Lighting.Brightness = 2
-        Lighting.GlobalShadows = false
-        Lighting.FogEnd = 1e5
-    else
-        Lighting.Ambient = Color3.fromRGB(0, 0, 0)
-        Lighting.Brightness = 1
-        Lighting.GlobalShadows = true
-        Lighting.FogEnd = 1000
-    end
-end
-
--- ==============================================
--- FUN/TROLL FEATURES
--- ==============================================
-
--- Fake Lag
 local function ToggleFakeLag()
     if St.FakeLag then
-        FakeLagConnection = RunService.Heartbeat:Connect(function()
+        local lastUpdate = tick()
+        local lagTimer = 0
+        local isLagging = false
+        
+        FakeLagConnection = RunService.Heartbeat:Connect(function(deltaTime)
             if not St.FakeLag then return end
-            wait(LagInterval)
+            
+            lagTimer = lagTimer + deltaTime
+            
+            -- Create a pattern: 0.5 sec normal, 0.3 sec lag, repeat
+            if not isLagging and lagTimer > 0.5 then
+                isLagging = true
+                lagTimer = 0
+                -- Freeze everything temporarily
+                if BodyVelocity then
+                    BodyVelocity.Velocity = Vector3.zero
+                end
+            elseif isLagging and lagTimer > LagInterval then
+                isLagging = false
+                lagTimer = 0
+            end
+            
+            -- During lag, delay all updates
+            if isLagging then
+                wait(LagInterval * 0.5) -- Micro-freeze during lag
+            end
         end)
         table.insert(CN, FakeLagConnection)
+        
+        -- Also add network lag simulation
+        local networkLag = RunService.Heartbeat:Connect(function()
+            if not St.FakeLag then return end
+            if math.random() < 0.3 then -- 30% chance to drop a packet
+                wait(LagInterval * 0.2)
+            end
+        end)
+        table.insert(CN, networkLag)
+        
     elseif FakeLagConnection then
         FakeLagConnection:Disconnect()
         FakeLagConnection = nil
     end
 end
 
--- Wifi Lag (teleport back and forth)
+-- ==============================================
+-- WIFI LAG (Rubberbanding)
+-- ==============================================
 local function ToggleWifiLag()
     if St.WifiLag then
         local lastPos = Root and Root.Position
+        local rubberBandAmount = 0
+        
         WifiLagConnection = RunService.Heartbeat:Connect(function()
             if not St.WifiLag or not Root then return end
             
-            if lastPos and math.random() < 0.3 then -- 30% chance to lag
-                Root.CFrame = CFrame.new(lastPos + Vector3.new(
-                    math.random(-WifiLagStrength, WifiLagStrength),
-                    math.random(-WifiLagStrength, WifiLagStrength),
-                    math.random(-WifiLagStrength, WifiLagStrength)
-                ))
+            rubberBandAmount = rubberBandAmount + 1
+            
+            -- Every 10 frames, do a rubberband effect
+            if rubberBandAmount >= 10 then
+                rubberBandAmount = 0
+                if lastPos then
+                    -- Snap back to previous position (rubberbanding)
+                    Root.CFrame = CFrame.new(lastPos)
+                end
             end
+            
+            -- Random teleports within range (wifi lag spikes)
+            if math.random() < 0.2 then -- 20% chance
+                local offset = Vector3.new(
+                    math.random(-WifiLagStrength, WifiLagStrength),
+                    math.random(-WifiLagStrength/2, WifiLagStrength/2),
+                    math.random(-WifiLagStrength, WifiLagStrength)
+                )
+                Root.CFrame = CFrame.new(Root.Position + offset)
+            end
+            
             lastPos = Root.Position
         end)
         table.insert(CN, WifiLagConnection)
@@ -451,7 +282,9 @@ local function ToggleWifiLag()
     end
 end
 
--- Anchor Interval (alternate anchored state)
+-- ==============================================
+-- ANCHOR INTERVAL (Flickering anchor)
+-- ==============================================
 local function ToggleAnchorInterval()
     if St.AnchorInterval then
         local anchored = false
@@ -470,7 +303,9 @@ local function ToggleAnchorInterval()
     end
 end
 
--- SpinBot
+-- ==============================================
+-- SPIN BOT
+-- ==============================================
 local function ToggleSpinBot()
     if St.SpinBot then
         SpinConnection = RunService.Heartbeat:Connect(function()
@@ -484,7 +319,9 @@ local function ToggleSpinBot()
     end
 end
 
--- Sit Spin
+-- ==============================================
+-- SIT SPIN
+-- ==============================================
 local function ToggleSitSpin()
     if St.SitSpin then
         if Hum then Hum.Sit = true end
@@ -500,25 +337,46 @@ local function ToggleSitSpin()
     end
 end
 
--- Float
+-- ==============================================
+-- FLOAT (Hover in place)
+-- ==============================================
 local function ToggleFloat()
     if St.Float then
         local bf = Instance.new("BodyForce")
         bf.Force = Vector3.new(0, Char:GetMass() * 196.2, 0)
         bf.Parent = Root
-        FL.float = bf
-    elseif FL.float then
-        FL.float:Destroy()
-        FL.float = nil
+        
+        -- Add slight drift for realism
+        local driftConnection = RunService.Heartbeat:Connect(function()
+            if not St.Float or not Root then return end
+            -- Small random movement
+            Root.CFrame = Root.CFrame * CFrame.new(
+                math.random(-1, 1) * 0.1,
+                math.sin(tick()) * 0.05,
+                math.random(-1, 1) * 0.1
+            )
+        end)
+        table.insert(CN, driftConnection)
+        
+    else
+        local bf = Root:FindFirstChildOfClass("BodyForce")
+        if bf then bf:Destroy() end
     end
 end
 
--- Anti Gravity
+-- ==============================================
+-- ANTI GRAVITY (Makes objects float)
+-- ==============================================
 local function ToggleAntiGravity()
     if St.AntiGravity then
+        -- Store original gravity
+        OriginalGravity = WS.Gravity
+        WS.Gravity = 0
+        
+        -- Make all unanchored parts float
         for _, part in ipairs(WS:GetDescendants()) do
             if part:IsA("BasePart") and not part.Anchored and part ~= Root then
-                part.Velocity = Vector3.new(0, 50, 0)
+                part.Velocity = Vector3.new(0, 10, 0)
             end
         end
         
@@ -526,303 +384,164 @@ local function ToggleAntiGravity()
             if not St.AntiGravity then return end
             for _, part in ipairs(WS:GetDescendants()) do
                 if part:IsA("BasePart") and not part.Anchored and part ~= Root then
-                    part.Velocity = Vector3.new(0, 50, 0)
+                    part.Velocity = Vector3.new(0, 10, 0)
                 end
             end
         end)
         table.insert(CN, agConnection)
+    else
+        WS.Gravity = OriginalGravity or 196.2
     end
 end
 
 -- ==============================================
--- EMOTE FEATURES
+-- REVERSE CONTROLS
 -- ==============================================
-
--- Sit Emote
-local function ToggleSitEmote()
-    if Hum then
-        Hum.Sit = St.SitEmote
-    end
-end
-
--- Dance Emote
-local function DoDance()
-    if not Hum then return end
-    
-    -- Try different dance animations
-    local dances = {
-        "http://www.roblox.com/asset/?id=507771019", -- Dance1
-        "http://www.roblox.com/asset/?id=507771066", -- Dance2
-        "http://www.roblox.com/asset/?id=507771111", -- Dance3
-    }
-    
-    local anim = Instance.new("Animation")
-    anim.AnimationId = dances[math.random(#dances)]
-    
-    local track = Hum:LoadAnimation(anim)
-    track:Play()
-    
-    -- Stop after a while
-    task.wait(5)
-    track:Stop()
-end
-
--- Point Emote
-local function DoPoint()
-    if not Hum then return end
-    
-    local anim = Instance.new("Animation")
-    anim.AnimationId = "http://www.roblox.com/asset/?id=507766388" -- Point
-    
-    local track = Hum:LoadAnimation(anim)
-    track:Play()
-    
-    task.wait(2)
-    track:Stop()
-end
-
--- Wave Emote
-local function DoWave()
-    if not Hum then return end
-    
-    local anim = Instance.new("Animation")
-    anim.AnimationId = "http://www.roblox.com/asset/?id=507770239" -- Wave
-    
-    local track = Hum:LoadAnimation(anim)
-    track:Play()
-    
-    task.wait(2)
-    track:Stop()
-end
-
--- ==============================================
--- OTHER FEATURES
--- ==============================================
-
--- Anti AFK
-local function ToggleAntiAfk()
-    if St.AntiAfk then
-        local bb = Instance.new("BoolValue")
-        bb.Name = "AntiAfk"
-        bb.Parent = LP
-        
-        local v1 = 0
-        local v2 = 0
-        
-        AntiAfkConnection = RunService.Heartbeat:Connect(function()
-            if not St.AntiAfk then return end
-            v1 = v1 + 1
-            v2 = v2 + 1
-            if v1 >= 1000 then
-                v1 = 0
-                LP:Kick("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nRejoining...")
-                wait(1)
-                TeleportService:Teleport(game.PlaceId, LP)
-            end
-            if v2 >= 600 then
-                v2 = 0
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                wait(0.1)
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+local function ToggleReverseControls()
+    if St.ReverseControls then
+        ReverseControlsConnection = RunService.Heartbeat:Connect(function()
+            if not St.ReverseControls or not BodyVelocity then return end
+            
+            -- Reverse movement directions
+            local moveDir = Vector3.zero
+            if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir - Camera.CFrame.LookVector * FlySpeed end
+            if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir + Camera.CFrame.LookVector * FlySpeed end
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir + Camera.CFrame.RightVector * FlySpeed end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir - Camera.CFrame.RightVector * FlySpeed end
+            
+            if St.Fly and BodyVelocity then
+                BodyVelocity.Velocity = moveDir
+            elseif Hum then
+                -- For non-fly mode, we need to modify the humanoid's movement
+                -- This is trickier, but we can use a body velocity as well
+                if not BodyVelocity then
+                    BodyVelocity = Instance.new("BodyVelocity")
+                    BodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+                    BodyVelocity.P = 1e6
+                    BodyVelocity.Parent = Root
+                end
+                BodyVelocity.Velocity = moveDir
             end
         end)
-        table.insert(CN, AntiAfkConnection)
-    elseif AntiAfkConnection then
-        AntiAfkConnection:Disconnect()
-        AntiAfkConnection = nil
-        local bb = LP:FindFirstChild("AntiAfk")
-        if bb then bb:Destroy() end
-    end
-end
-
--- God Mode
-local function ToggleGodMode()
-    if St.GodMode then
-        if Hum then
-            Hum.MaxHealth = math.huge
-            Hum.Health = math.huge
+        table.insert(CN, ReverseControlsConnection)
+    elseif ReverseControlsConnection then
+        ReverseControlsConnection:Disconnect()
+        ReverseControlsConnection = nil
+        if BodyVelocity and not St.Fly then
+            BodyVelocity:Destroy()
+            BodyVelocity = nil
         end
-        
-        local godConnection = RunService.Heartbeat:Connect(function()
-            if not St.GodMode or not Hum then return end
-            Hum.Health = math.huge
-        end)
-        table.insert(CN, godConnection)
     end
 end
 
--- Inf Yeld (Execute Yeld)
-local function DoInfYeld()
-    loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
-end
-
 -- ==============================================
--- PLAYER SELECTOR
+-- DRUNK MODE (Wobbly movement)
 -- ==============================================
-local function CreatePlayerSelector(parent, y)
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, -16, 0, 150)
-    frame.Position = UDim2.new(0, 8, 0, y)
-    frame.BackgroundColor3 = CC
-    frame.BorderSizePixel = 0
-    frame.Parent = parent
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
-    local stroke = Instance.new("UIStroke", frame)
-    stroke.Color = CB
-    stroke.Thickness = 1
-    
-    local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, 0, 0, 30)
-    title.Position = UDim2.new(0, 0, 0, 0)
-    title.BackgroundColor3 = CC2
-    title.BorderSizePixel = 0
-    title.Text = "Target Player"
-    title.TextColor3 = CP
-    title.Font = Enum.Font.GothamBold
-    title.TextSize = 13
-    title.Parent = frame
-    Instance.new("UICorner", title).CornerRadius = UDim.new(0, 6)
-    
-    -- Search bar
-    local searchFrame = Instance.new("Frame")
-    searchFrame.Size = UDim2.new(1, -20, 0, 30)
-    searchFrame.Position = UDim2.new(0, 10, 0, 35)
-    searchFrame.BackgroundColor3 = CC2
-    searchFrame.BorderSizePixel = 0
-    searchFrame.Parent = frame
-    Instance.new("UICorner", searchFrame).CornerRadius = UDim.new(0, 6)
-    
-    local searchIcon = Instance.new("TextLabel")
-    searchIcon.Size = UDim2.new(0, 30, 1, 0)
-    searchIcon.Position = UDim2.new(0, 0, 0, 0)
-    searchIcon.BackgroundTransparency = 1
-    searchIcon.Text = "🔍"
-    searchIcon.TextColor3 = CSC
-    searchIcon.Font = Enum.Font.Gotham
-    searchIcon.TextSize = 14
-    searchIcon.Parent = searchFrame
-    
-    local searchBox = Instance.new("TextBox")
-    searchBox.Size = UDim2.new(1, -30, 1, 0)
-    searchBox.Position = UDim2.new(0, 30, 0, 0)
-    searchBox.BackgroundTransparency = 1
-    searchBox.PlaceholderText = "Search player..."
-    searchBox.PlaceholderColor3 = CIT
-    searchBox.Text = ""
-    searchBox.TextColor3 = CP
-    searchBox.Font = Enum.Font.Gotham
-    searchBox.TextSize = 12
-    searchBox.TextXAlignment = Enum.TextXAlignment.Left
-    searchBox.ClearTextOnFocus = false
-    searchBox.Parent = searchFrame
-    
-    -- Player list
-    local listFrame = Instance.new("ScrollingFrame")
-    listFrame.Size = UDim2.new(1, -20, 1, -70)
-    listFrame.Position = UDim2.new(0, 10, 0, 70)
-    listFrame.BackgroundTransparency = 1
-    listFrame.BorderSizePixel = 0
-    listFrame.ScrollBarThickness = 4
-    listFrame.ScrollBarImageColor3 = CA
-    listFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-    listFrame.Parent = frame
-    
-    local layout = Instance.new("UIListLayout", listFrame)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Padding = UDim.new(0, 2)
-    
-    local function UpdatePlayerList()
-        -- Clear existing
-        for _, child in ipairs(listFrame:GetChildren()) do
-            if child:IsA("TextButton") then
-                child:Destroy()
+local function ToggleDrunkMode()
+    if St.DrunkMode then
+        DrunkModeConnection = RunService.Heartbeat:Connect(function()
+            if not St.DrunkMode or not Root then return end
+            
+            -- Wobbly rotation
+            local wobble = math.sin(tick() * 5) * 0.1
+            Root.CFrame = Root.CFrame * CFrame.Angles(wobble, wobble * 2, wobble)
+            
+            -- Wobbly movement if flying
+            if St.Fly and BodyVelocity then
+                local currentVel = BodyVelocity.Velocity
+                BodyVelocity.Velocity = currentVel + Vector3.new(
+                    math.sin(tick() * 3) * 5,
+                    math.cos(tick() * 4) * 3,
+                    math.cos(tick() * 3) * 5
+                )
             end
-        end
-        
-        local searchText = searchBox.Text:lower()
-        local players = GetPlayers()
-        
-        table.sort(players, function(a, b)
-            return a.Name < b.Name
         end)
-        
-        for _, plr in ipairs(players) do
-            if searchText == "" or plr.Name:lower():find(searchText, 1, true) then
-                local btn = Instance.new("TextButton")
-                btn.Size = UDim2.new(1, 0, 0, 28)
-                btn.BackgroundColor3 = CC2
-                btn.BorderSizePixel = 0
-                btn.Text = plr.Name
-                btn.TextColor3 = GetPlayerColor(plr)
-                btn.Font = Enum.Font.Gotham
-                btn.TextSize = 12
-                btn.TextXAlignment = Enum.TextXAlignment.Left
-                btn.Parent = listFrame
-                Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 4)
-                
-                local padding = Instance.new("UIPadding", btn)
-                padding.PaddingLeft = UDim.new(0, 6)
-                
-                btn.MouseEnter:Connect(function()
-                    btn.BackgroundColor3 = CO
-                end)
-                
-                btn.MouseLeave:Connect(function()
-                    btn.BackgroundColor3 = CC2
-                end)
-                
-                btn.MouseButton1Click:Connect(function()
-                    SelectedTarget = plr
-                    if SCB then SCB("Target: " .. plr.Name) end
-                    
-                    for _, b in ipairs(listFrame:GetChildren()) do
-                        if b:IsA("TextButton") then
-                            b.BackgroundColor3 = CC2
-                        end
-                    end
-                    btn.BackgroundColor3 = CA
-                end)
-            end
-        end
-        
-        listFrame.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y)
+        table.insert(CN, DrunkModeConnection)
+    elseif DrunkModeConnection then
+        DrunkModeConnection:Disconnect()
+        DrunkModeConnection = nil
     end
-    
-    searchBox.Changed:Connect(function(prop)
-        if prop == "Text" then
-            UpdatePlayerList()
-        end
-    end)
-    
-    UpdatePlayerList()
-    
-    -- Refresh every 5 seconds
-    task.spawn(function()
-        while true do
-            task.wait(5)
-            UpdatePlayerList()
-        end
-    end)
-    
-    return frame
 end
 
 -- ==============================================
--- WATCH FOR PLAYERS
+-- RUBBER BAND (Snap back to position)
 -- ==============================================
-local function SetupPlayerWatcher()
-    AC(Players.PlayerAdded:Connect(function(plr)
-        if St.ESP or St.Chams or St.Tracers then
-            task.wait(1)
-            CreateESP(plr)
-        end
-    end))
-    
-    AC(Players.PlayerRemoving:Connect(function(plr)
-        RemoveESP(plr)
-    end))
+local function ToggleRubberBand()
+    if St.RubberBand then
+        local startPos = Root and Root.Position
+        local bandStrength = 0.1
+        
+        RubberBandConnection = RunService.Heartbeat:Connect(function()
+            if not St.RubberBand or not Root or not startPos then return end
+            
+            -- Calculate how far from start position
+            local dist = (Root.Position - startPos).Magnitude
+            if dist > 20 then
+                -- Pull back toward start
+                local direction = (startPos - Root.Position).Unit
+                Root.CFrame = CFrame.new(Root.Position + direction * dist * bandStrength)
+                bandStrength = bandStrength + 0.05 -- Increase pull strength
+            else
+                bandStrength = 0.1 -- Reset when close
+            end
+        end)
+        table.insert(CN, RubberBandConnection)
+    elseif RubberBandConnection then
+        RubberBandConnection:Disconnect()
+        RubberBandConnection = nil
+    end
 end
-SetupPlayerWatcher()
+
+-- ==============================================
+-- SCREEN SHAKE
+-- ==============================================
+local function ToggleScreenShake()
+    if St.ScreenShake then
+        local originalCFrame = Camera.CFrame
+        
+        ScreenShakeConnection = RunService.RenderStepped:Connect(function()
+            if not St.ScreenShake or not Camera then return end
+            
+            -- Random shake offset
+            local shake = Vector3.new(
+                math.random(-1, 1) * 0.5,
+                math.random(-1, 1) * 0.5,
+                math.random(-1, 1) * 0.5
+            )
+            Camera.CFrame = originalCFrame * CFrame.new(shake)
+            
+            -- Update original position occasionally
+            if tick() % 2 < 0.1 then
+                originalCFrame = Camera.CFrame
+            end
+        end)
+        table.insert(CN, ScreenShakeConnection)
+    elseif ScreenShakeConnection then
+        ScreenShakeConnection:Disconnect()
+        ScreenShakeConnection = nil
+    end
+end
+
+-- ==============================================
+-- GRAVITY FLIP
+-- ==============================================
+local function ToggleGravityFlip()
+    if St.GravityFlip then
+        OriginalGravity = WS.Gravity
+        WS.Gravity = -WS.Gravity or -196.2
+        
+        -- Flip character orientation
+        if Root then
+            Root.CFrame = Root.CFrame * CFrame.Angles(math.pi, 0, 0)
+        end
+        
+    else
+        WS.Gravity = OriginalGravity or 196.2
+        if Root then
+            Root.CFrame = Root.CFrame * CFrame.Angles(math.pi, 0, 0)
+        end
+    end
+end
 
 -- ==============================================
 -- UNLOAD FUNCTION
@@ -834,8 +553,6 @@ local function UL()
     St.Walkspeed = false; SetWalkspeed()
     St.Jumppower = false; SetJumppower()
     St.InfiniteJump = false; ToggleInfiniteJump()
-    St.ESP = false; St.Chams = false; St.Tracers = false; RefreshESP()
-    St.FullBright = false; ToggleFullBright()
     St.FakeLag = false; ToggleFakeLag()
     St.WifiLag = false; ToggleWifiLag()
     St.AnchorInterval = false; ToggleAnchorInterval()
@@ -843,9 +560,11 @@ local function UL()
     St.SitSpin = false; ToggleSitSpin()
     St.Float = false; ToggleFloat()
     St.AntiGravity = false; ToggleAntiGravity()
-    St.SitEmote = false; ToggleSitEmote()
-    St.AntiAfk = false; ToggleAntiAfk()
-    St.GodMode = false; ToggleGodMode()
+    St.ReverseControls = false; ToggleReverseControls()
+    St.DrunkMode = false; ToggleDrunkMode()
+    St.RubberBand = false; ToggleRubberBand()
+    St.ScreenShake = false; ToggleScreenShake()
+    St.GravityFlip = false; ToggleGravityFlip()
     
     -- Clean up connections
     for _, c in ipairs(CN) do
@@ -854,28 +573,31 @@ local function UL()
     CN = {}
     
     -- Clean up GUI
-    if PGui:FindFirstChild("UniversalHub") then
-        PGui.UniversalHub:Destroy()
+    if PGui:FindFirstChild("FunHub") then
+        PGui.FunHub:Destroy()
     end
     
-    print("[Universal] Unloaded")
+    -- Reset gravity
+    WS.Gravity = 196.2
+    
+    print("[Fun Hub] Unloaded")
 end
 
-if PGui:FindFirstChild("UniversalHub") then UL() end
+if PGui:FindFirstChild("FunHub") then UL() end
 
 -- ==============================================
 -- GUI CONSTRUCTION
 -- ==============================================
 local SGui = Instance.new("ScreenGui")
-SGui.Name = "UniversalHub"
+SGui.Name = "FunHub"
 SGui.ResetOnSpawn = false
 SGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 SGui.Parent = PGui
 
 local MF = Instance.new("Frame")
 MF.Name = "MainFrame"
-MF.Size = UDim2.new(0, 650, 0, 550)
-MF.Position = UDim2.new(0.5, -325, 0.5, -275)
+MF.Size = UDim2.new(0, 520, 0, 550)
+MF.Position = UDim2.new(0.5, -260, 0.5, -275)
 MF.BackgroundColor3 = CM
 MF.BorderSizePixel = 0
 MF.ClipsDescendants = true
@@ -887,12 +609,12 @@ mfs.Thickness = 1
 
 -- Title bar
 local TBar = Instance.new("Frame")
-TBar.Size = UDim2.new(0, 200, 0, 42)
+TBar.Size = UDim2.new(0, 150, 0, 42)
 TBar.BackgroundColor3 = CS
 TBar.BorderSizePixel = 0
 TBar.Parent = MF
 local TLbl = Instance.new("TextLabel")
-TLbl.Text = "Universal Hub"
+TLbl.Text = "Fun Hub"
 TLbl.Size = UDim2.new(1, 0, 1, 0)
 TLbl.BackgroundTransparency = 1
 TLbl.TextColor3 = CP
@@ -913,13 +635,13 @@ HLbl.Parent = MF
 
 -- Footer
 local Foot = Instance.new("Frame")
-Foot.Size = UDim2.new(0, 500, 0, 22)
+Foot.Size = UDim2.new(0, 370, 0, 22)
 Foot.Position = UDim2.new(0, 150, 1, -22)
 Foot.BackgroundColor3 = CS
 Foot.BorderSizePixel = 0
 Foot.Parent = MF
 local FLbl = Instance.new("TextLabel")
-FLbl.Text = "Universal Script - Tons of Features"
+FLbl.Text = "Movement & Funny Features"
 FLbl.Size = UDim2.new(1, -10, 1, 0)
 FLbl.Position = UDim2.new(0, 10, 0, 0)
 FLbl.BackgroundTransparency = 1
@@ -951,7 +673,7 @@ local ActAB = nil
 
 local function NewTab()
     local f = Instance.new("Frame")
-    f.Size = UDim2.new(0, 500, 1, -64)
+    f.Size = UDim2.new(0, 370, 1, -64)
     f.Position = UDim2.new(0, 150, 0, 42)
     f.BackgroundColor3 = CM
     f.BorderSizePixel = 0
@@ -1114,31 +836,6 @@ local function NTog(p, y, label, key, cb)
     if St[key] then Vis(true) end
 end
 
-local function NButton(p, y, label, color, cb)
-    local Btn = Instance.new("TextButton")
-    Btn.Size = UDim2.new(1, -16, 0, 36)
-    Btn.Position = UDim2.new(0, 8, 0, y)
-    Btn.BackgroundColor3 = color or CA
-    Btn.BorderSizePixel = 0
-    Btn.Text = label
-    Btn.TextColor3 = CW
-    Btn.Font = Enum.Font.GothamBold
-    Btn.TextSize = 13
-    Btn.AutoButtonColor = false
-    Btn.Parent = p
-    Instance.new("UICorner", Btn).CornerRadius = UDim.new(0, 6)
-
-    Btn.MouseEnter:Connect(function()
-        TweenService:Create(Btn, TweenInfo.new(0.1), { BackgroundColor3 = Color3.fromRGB(150, 95, 255) }):Play()
-    end)
-
-    Btn.MouseLeave:Connect(function()
-        TweenService:Create(Btn, TweenInfo.new(0.1), { BackgroundColor3 = color or CA }):Play()
-    end)
-
-    Btn.MouseButton1Click:Connect(cb)
-end
-
 local function NSlider(p, y, label, min, max, default, callback)
     local Card = Instance.new("Frame")
     Card.Size = UDim2.new(1, -16, 0, 58)
@@ -1206,7 +903,13 @@ local function NSlider(p, y, label, min, max, default, callback)
     local function UpdateSlider(xPos)
         local rel = (xPos - Track.AbsolutePosition.X) / Track.AbsoluteSize.X
         rel = math.clamp(rel, 0, 1)
-        value = math.floor(min + rel * (max - min))
+        value = min + (rel * (max - min))
+        -- Round to 2 decimal places for lag interval
+        if min < 1 then
+            value = math.floor(value * 100) / 100
+        else
+            value = math.floor(value)
+        end
         Fill.Size = UDim2.new(rel, 0, 1, 0)
         Thumb.Position = UDim2.new(rel, 0, 0.5, 0)
         Val.Text = tostring(value)
@@ -1253,37 +956,25 @@ NTog(MoveTab, 120, "Walkspeed", "Walkspeed", function() SetWalkspeed() end)
 NTog(MoveTab, 162, "Jumppower", "Jumppower", function() SetJumppower() end)
 NTog(MoveTab, 204, "Infinite Jump", "InfiniteJump", function() ToggleInfiniteJump() end)
 
--- Visual Tab
-local VisTab = NewTab()
-table.insert(Tabs, VisTab)
-SH(VisTab, 8, "VISUALS")
-NTog(VisTab, 36, "Player ESP", "ESP", function() RefreshESP() end)
-NTog(VisTab, 78, "Player Chams", "Chams", function() RefreshESP() end)
-NTog(VisTab, 120, "Tracers", "Tracers", function() RefreshESP() end)
-NTog(VisTab, 162, "Full Bright", "FullBright", function() ToggleFullBright() end)
+-- Funny Tab
+local FunnyTab = NewTab()
+table.insert(Tabs, FunnyTab)
+SH(FunnyTab, 8, "FUNNY / TROLL")
 
--- Fun/Troll Tab
-local FunTab = NewTab()
-table.insert(Tabs, FunTab)
-SH(FunTab, 8, "FUN / TROLL")
-NTog(FunTab, 36, "Fake Lag", "FakeLag", function() ToggleFakeLag() end)
-NTog(FunTab, 78, "Wifi Lag", "WifiLag", function() ToggleWifiLag() end)
-NTog(FunTab, 120, "Anchor Interval", "AnchorInterval", function() ToggleAnchorInterval() end)
-NTog(FunTab, 162, "SpinBot", "SpinBot", function() ToggleSpinBot() end)
-NTog(FunTab, 204, "Sit Spin", "SitSpin", function() ToggleSitSpin() end)
-NTog(FunTab, 246, "Float", "Float", function() ToggleFloat() end)
-NTog(FunTab, 288, "Anti Gravity", "AntiGravity", function() ToggleAntiGravity() end)
+NTog(FunnyTab, 36, "Fake Lag", "FakeLag", function() ToggleFakeLag() end)
+NTog(FunnyTab, 78, "WiFi Lag", "WifiLag", function() ToggleWifiLag() end)
+NTog(FunnyTab, 120, "Anchor Interval", "AnchorInterval", function() ToggleAnchorInterval() end)
+NTog(FunnyTab, 162, "Spin Bot", "SpinBot", function() ToggleSpinBot() end)
+NTog(FunnyTab, 204, "Sit Spin", "SitSpin", function() ToggleSitSpin() end)
+NTog(FunnyTab, 246, "Float", "Float", function() ToggleFloat() end)
+NTog(FunnyTab, 288, "Anti Gravity", "AntiGravity", function() ToggleAntiGravity() end)
+NTog(FunnyTab, 330, "Reverse Controls", "ReverseControls", function() ToggleReverseControls() end)
+NTog(FunnyTab, 372, "Drunk Mode", "DrunkMode", function() ToggleDrunkMode() end)
+NTog(FunnyTab, 414, "Rubber Band", "RubberBand", function() ToggleRubberBand() end)
+NTog(FunnyTab, 456, "Screen Shake", "ScreenShake", function() ToggleScreenShake() end)
+NTog(FunnyTab, 498, "Gravity Flip", "GravityFlip", function() ToggleGravityFlip() end)
 
--- Emotes Tab
-local EmoteTab = NewTab()
-table.insert(Tabs, EmoteTab)
-SH(EmoteTab, 8, "EMOTES")
-NTog(EmoteTab, 36, "Sit", "SitEmote", function() ToggleSitEmote() end)
-NButton(EmoteTab, 78, "Dance", CA, function() DoDance() end)
-NButton(EmoteTab, 120, "Point", Color3.fromRGB(255, 200, 0), function() DoPoint() end)
-NButton(EmoteTab, 162, "Wave", Color3.fromRGB(100, 255, 100), function() DoWave() end)
-
--- Settings Tab
+-- Settings Tab (for sliders)
 local SettingsTab = NewTab()
 table.insert(Tabs, SettingsTab)
 SH(SettingsTab, 8, "SETTINGS")
@@ -1322,24 +1013,42 @@ StatusValue.TextXAlignment = Enum.TextXAlignment.Left
 StatusValue.Parent = StatusFrame
 SCB = function(s) StatusValue.Text = s end
 
--- Player Selector
-CreatePlayerSelector(SettingsTab, 86)
-
--- Other Features
-NTog(SettingsTab, 250, "Anti AFK", "AntiAfk", function() ToggleAntiAfk() end)
-NTog(SettingsTab, 292, "God Mode", "GodMode", function() ToggleGodMode() end)
-NButton(SettingsTab, 334, "Load Inf Yeld", Color3.fromRGB(255, 100, 100), function() DoInfYeld() end)
-
 -- Sliders
-NSlider(SettingsTab, 384, "Fly Speed", 10, 200, FlySpeed, function(val) FlySpeed = val end)
-NSlider(SettingsTab, 450, "Lag Interval", 0.01, 1, LagInterval, function(val) LagInterval = val end)
-NSlider(SettingsTab, 516, "Wifi Strength", 1, 50, WifiLagStrength, function(val) WifiLagStrength = val end)
+NSlider(SettingsTab, 86, "Fly Speed", 10, 200, FlySpeed, function(val) 
+    FlySpeed = val 
+    if SCB then SCB("Fly Speed: " .. val) end
+end)
+
+NSlider(SettingsTab, 152, "Fake Lag Duration", 0.01, 0.5, LagInterval, function(val) 
+    LagInterval = val 
+    if SCB then SCB("Lag Duration: " .. val .. "s") end
+end)
+
+NSlider(SettingsTab, 218, "WiFi Lag Strength", 1, 30, WifiLagStrength, function(val) 
+    WifiLagStrength = val 
+    if SCB then SCB("WiFi Strength: " .. val) end
+end)
+
+NSlider(SettingsTab, 284, "Spin Speed", 1, 30, SpinSpeed, function(val) 
+    SpinSpeed = val 
+    if SCB then SCB("Spin Speed: " .. val) end
+end)
+
+NSlider(SettingsTab, 350, "Walkspeed Value", 16, 200, WalkSpeedValue, function(val) 
+    WalkSpeedValue = val 
+    if St.Walkspeed then SetWalkspeed() end
+    if SCB then SCB("Walkspeed: " .. val) end
+end)
+
+NSlider(SettingsTab, 416, "Jump Power", 50, 200, JumpPowerValue, function(val) 
+    JumpPowerValue = val 
+    if St.Jumppower then SetJumppower() end
+    if SCB then SCB("Jump Power: " .. val) end
+end)
 
 -- Build sidebar tabs
 local mB, mA, mT = NST("Movement", MoveTab)
-local vB, vA, vT = NST("Visuals", VisTab)
-local fB, fA, fT = NST("Fun/Troll", FunTab)
-local eB, eA, eT = NST("Emotes", EmoteTab)
+local fB, fA, fT = NST("Funny", FunnyTab)
 local sB, sA, sT = NST("Settings", SettingsTab)
 
 -- Show Movement tab by default
@@ -1385,4 +1094,4 @@ end)
 MF.BackgroundTransparency = 1
 TweenService:Create(MF, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 0 }):Play()
 
-print("[Universal Hub] Loaded - 25+ Features")
+print("[Fun Hub] Loaded - Movement & Funny Features")
