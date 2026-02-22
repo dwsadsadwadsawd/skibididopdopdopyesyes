@@ -61,6 +61,9 @@ local St = {
     RubberBand = false,
     ScreenShake = false,
     GravityFlip = false,
+    
+    -- Creepy Pasta
+    CreepyPasta = false,
 }
 
 -- ==============================================
@@ -70,15 +73,15 @@ local CN = {} -- Connections
 local SCB = nil -- Status callback
 local LagInterval = 0.1
 local WifiLagStrength = 10
-local AnchorSlowMultiplier = 0.3 -- How much to slow movement (0.3 = 30% of normal speed)
-local AnchorIntervalSpeed = 0.2 -- How fast it toggles
+local AnchorSlowMultiplier = 0.3
+local AnchorIntervalSpeed = 0.2
 local SpinSpeed = 10
 local FlySpeed = 50
 local WalkSpeedValue = 50
 local JumpPowerValue = 100
 local BodyVelocity = nil
 local BodyGyro = nil
-local AnchorBodyVelocity = nil -- Separate body velocity for anchor slowing
+local AnchorBodyVelocity = nil
 local SpinConnection = nil
 local FakeLagConnection = nil
 local WifiLagConnection = nil
@@ -89,8 +92,12 @@ local DrunkModeConnection = nil
 local RubberBandConnection = nil
 local ScreenShakeConnection = nil
 local OriginalGravity = nil
-local OriginalWalkSpeed = 16
-local OriginalJumpPower = 50
+
+-- Creepy Pasta variables
+local CreepyPastaConnection = nil
+local CreepyPastaTargetAngle = 0
+local CreepyPastaCurrentAngle = 0
+local CreepyPastaSpeed = 5 -- How fast the head turns
 
 local function AC(c) table.insert(CN, c) return c end
 
@@ -167,7 +174,7 @@ local function ToggleNoclip()
     end
 end
 
--- Walkspeed (keep this for normal walkspeed toggle)
+-- Walkspeed
 local function SetWalkspeed()
     if Hum then
         if St.Walkspeed then
@@ -205,13 +212,12 @@ local function ToggleInfiniteJump()
 end
 
 -- ==============================================
--- FIXED ANCHOR INTERVAL (Uses BodyVelocity, doesn't affect animations)
+-- ANCHOR INTERVAL
 -- ==============================================
 local function ToggleAnchorInterval()
     if St.AnchorInterval then
-        local anchored = false
+        local slowed = false
         
-        -- Create a BodyVelocity for controlling movement during anchor
         AnchorBodyVelocity = Instance.new("BodyVelocity")
         AnchorBodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
         AnchorBodyVelocity.P = 1e6
@@ -221,32 +227,24 @@ local function ToggleAnchorInterval()
         AnchorIntervalConnection = RunService.Heartbeat:Connect(function()
             if not St.AnchorInterval or not Root then return end
             
-            anchored = not anchored
-            Root.Anchored = anchored
+            slowed = not slowed
             
-            if anchored then
-                -- When anchored, use BodyVelocity to allow slow movement
-                -- This doesn't affect the walking animation
-                if AnchorBodyVelocity then
-                    -- Calculate movement direction based on camera
-                    local moveDir = Vector3.zero
-                    if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + Camera.CFrame.LookVector end
-                    if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - Camera.CFrame.LookVector end
-                    if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - Camera.CFrame.RightVector end
-                    if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + Camera.CFrame.RightVector end
-                    
-                    -- Apply slow movement
-                    if moveDir.Magnitude > 0 then
-                        AnchorBodyVelocity.Velocity = moveDir.Unit * (16 * AnchorSlowMultiplier)
-                    else
-                        AnchorBodyVelocity.Velocity = Vector3.zero
-                    end
-                end
-            else
-                -- When unanchored, stop the BodyVelocity
-                if AnchorBodyVelocity then
+            if slowed then
+                -- When in "slow mode", use BodyVelocity
+                local moveDir = Vector3.zero
+                if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + Camera.CFrame.LookVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - Camera.CFrame.LookVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - Camera.CFrame.RightVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + Camera.CFrame.RightVector end
+                
+                if moveDir.Magnitude > 0 then
+                    AnchorBodyVelocity.Velocity = moveDir.Unit * (16 * AnchorSlowMultiplier)
+                else
                     AnchorBodyVelocity.Velocity = Vector3.zero
                 end
+            else
+                -- When in normal mode, stop BodyVelocity
+                AnchorBodyVelocity.Velocity = Vector3.zero
             end
             
             wait(AnchorIntervalSpeed)
@@ -260,7 +258,83 @@ local function ToggleAnchorInterval()
             AnchorBodyVelocity:Destroy()
             AnchorBodyVelocity = nil
         end
-        if Root then Root.Anchored = false end
+    end
+end
+
+-- ==============================================
+-- CREEPY PASTA FEATURE
+-- Makes character look left/right with mouse buttons without affecting movement or camera
+-- ==============================================
+local function ToggleCreepyPasta()
+    if St.CreepyPasta then
+        local neck = Char:FindFirstChild("Head") and Char.Head:FindFirstChild("Neck")
+        
+        -- If no neck joint exists, we'll use Root CFrame rotation instead
+        local useRootRotation = not neck
+        
+        CreepyPastaConnection = RunService.Heartbeat:Connect(function(dt)
+            if not St.CreepyPasta or not Root then return end
+            
+            -- Check for XButton1 (mouse back button) and XButton2 (mouse forward button)
+            local x1Pressed = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton4) -- XButton1
+            local x2Pressed = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton5) -- XButton2
+            
+            -- Set target angle based on buttons
+            if x1Pressed and x2Pressed then
+                CreepyPastaTargetAngle = 0 -- Look straight when both pressed
+            elseif x1Pressed then
+                CreepyPastaTargetAngle = math.rad(60) -- Look right (60 degrees)
+            elseif x2Pressed then
+                CreepyPastaTargetAngle = math.rad(-60) -- Look left (-60 degrees)
+            else
+                CreepyPastaTargetAngle = 0 -- Look straight
+            end
+            
+            -- Smoothly interpolate current angle to target angle
+            CreepyPastaCurrentAngle = CreepyPastaCurrentAngle + (CreepyPastaTargetAngle - CreepyPastaCurrentAngle) * math.min(dt * CreepyPastaSpeed, 1)
+            
+            if useRootRotation then
+                -- Get current movement direction (for keeping forward movement consistent)
+                local moveDir = Vector3.zero
+                if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + Camera.CFrame.LookVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - Camera.CFrame.LookVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - Camera.CFrame.RightVector end
+                if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + Camera.CFrame.RightVector end
+                
+                -- If moving, preserve movement direction while rotating body
+                if moveDir.Magnitude > 0.1 then
+                    -- Rotate the Root CFrame but keep the forward direction aligned with movement
+                    local currentCF = Root.CFrame
+                    local newCF = CFrame.new(currentCF.Position) * CFrame.Angles(0, CreepyPastaCurrentAngle, 0)
+                    Root.CFrame = newCF
+                else
+                    -- Just rotate in place
+                    Root.CFrame = CFrame.new(Root.Position) * CFrame.Angles(0, CreepyPastaCurrentAngle, 0)
+                end
+            else
+                -- Use neck joint for more natural head turning
+                if neck then
+                    neck.C0 = CFrame.new(0, 1, 0) * CFrame.Angles(0, CreepyPastaCurrentAngle, 0)
+                end
+            end
+        end)
+        table.insert(CN, CreepyPastaConnection)
+        
+        if SCB then SCB("Creepy Pasta enabled - Use XButton1/XButton2") end
+        
+    elseif CreepyPastaConnection then
+        CreepyPastaConnection:Disconnect()
+        CreepyPastaConnection = nil
+        
+        -- Reset neck if it exists
+        local neck = Char:FindFirstChild("Head") and Char.Head:FindFirstChild("Neck")
+        if neck then
+            neck.C0 = CFrame.new(0, 1, 0) * CFrame.Angles(0, 0, 0)
+        end
+        
+        CreepyPastaTargetAngle = 0
+        CreepyPastaCurrentAngle = 0
+        if SCB then SCB("Creepy Pasta disabled") end
     end
 end
 
@@ -487,6 +561,7 @@ local function UL()
     St.RubberBand = false; ToggleRubberBand()
     St.ScreenShake = false; ToggleScreenShake()
     St.GravityFlip = false; ToggleGravityFlip()
+    St.CreepyPasta = false; ToggleCreepyPasta()
     
     for _, c in ipairs(CN) do
         pcall(function() c:Disconnect() end)
@@ -515,8 +590,8 @@ SGui.Parent = PGui
 
 local MF = Instance.new("Frame")
 MF.Name = "MainFrame"
-MF.Size = UDim2.new(0, 520, 0, 600)
-MF.Position = UDim2.new(0.5, -260, 0.5, -300)
+MF.Size = UDim2.new(0, 520, 0, 630) -- Increased height for new feature
+MF.Position = UDim2.new(0.5, -260, 0.5, -315)
 MF.BackgroundColor3 = CM
 MF.BorderSizePixel = 0
 MF.ClipsDescendants = true
@@ -882,7 +957,7 @@ SH(FunnyTab, 8, "FUNNY / TROLL")
 
 NTog(FunnyTab, 36, "Fake Lag", "FakeLag", function() ToggleFakeLag() end)
 NTog(FunnyTab, 78, "WiFi Lag", "WifiLag", function() ToggleWifiLag() end)
-NTog(FunnyTab, 120, "Anchor Interval (Slows you)", "AnchorInterval", function() ToggleAnchorInterval() end)
+NTog(FunnyTab, 120, "Anchor Interval", "AnchorInterval", function() ToggleAnchorInterval() end)
 NTog(FunnyTab, 162, "Spin Bot", "SpinBot", function() ToggleSpinBot() end)
 NTog(FunnyTab, 204, "Sit Spin", "SitSpin", function() ToggleSitSpin() end)
 NTog(FunnyTab, 246, "Float", "Float", function() ToggleFloat() end)
@@ -892,6 +967,7 @@ NTog(FunnyTab, 372, "Drunk Mode", "DrunkMode", function() ToggleDrunkMode() end)
 NTog(FunnyTab, 414, "Rubber Band", "RubberBand", function() ToggleRubberBand() end)
 NTog(FunnyTab, 456, "Screen Shake", "ScreenShake", function() ToggleScreenShake() end)
 NTog(FunnyTab, 498, "Gravity Flip", "GravityFlip", function() ToggleGravityFlip() end)
+NTog(FunnyTab, 540, "Creepy Pasta (XButtons)", "CreepyPasta", function() ToggleCreepyPasta() end)
 
 -- Settings Tab
 local SettingsTab = NewTab()
@@ -946,7 +1022,7 @@ NSlider(SettingsTab, 248, "WiFi Lag Strength", 1, 30, WifiLagStrength, function(
     WifiLagStrength = val 
 end)
 
--- ANCHOR INTERVAL SETTINGS (Fixed - uses BodyVelocity, doesn't affect animations)
+-- ANCHOR INTERVAL SETTINGS
 SH(SettingsTab, 314, "ANCHOR INTERVAL")
 
 NSlider(SettingsTab, 344, "Toggle Speed", 0.05, 1.0, AnchorIntervalSpeed, function(val) 
@@ -1023,4 +1099,4 @@ end)
 MF.BackgroundTransparency = 1
 TweenService:Create(MF, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 0 }):Play()
 
-print("[Fun Hub] Loaded - Fixed Anchor Interval (doesn't affect animations)")
+print("[Fun Hub] Loaded - Added Creepy Pasta feature (XButton1/XButton2)")
