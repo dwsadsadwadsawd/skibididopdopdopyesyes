@@ -116,7 +116,7 @@ local QPressedBody = false
 
 -- AI variables
 local AIConnection = nil
-local AIState = "idle" -- idle, walking, following, hiding, exploring, fleeing, sitting
+local AIState = "idle" -- idle, walking, waiting, following, hiding, exploring, fleeing, sitting
 local AIMode = "explore" -- explore, follow, hide, sit, flee
 local AITargetPlayer = nil
 local AITargetPosition = nil
@@ -132,16 +132,20 @@ local AISitDuration = 3
 local AILookDuration = 2
 local AIExploreRadius = 30
 local AIFollowDistance = 10
+local AIWaitTime = 0
+local AIPathBlocked = false
 
 -- Pathfinding variables
 local Path = nil
 local Waypoints = {}
 local CurrentWaypointIndex = 1
 local LastPathUpdate = 0
-local PathUpdateInterval = 2 -- Update path every 2 seconds
+local PathUpdateInterval = 1 -- Update path every 1 second
+local PathBlockedTimer = 0
+local PathBlockedThreshold = 3 -- Wait 3 seconds before giving up on blocked path
 
--- Hide spots
-local HideSpots = {}
+-- Points of interest for looking around
+local PointsOfInterest = {}
 
 local function AC(c) table.insert(CN, c) return c end
 
@@ -467,18 +471,91 @@ local function ToggleCreepyPastaBody()
 end
 
 -- ==============================================
--- AI FEATURE - GROUND MOVEMENT WITH PATHFINDING
+-- AI FEATURE - PROPER EXPLORATION AND PATHFINDING
 -- ==============================================
 
--- Look at target using body rotation (for looking where you're walking)
-local function LookAt(targetPos)
+-- Scan for points of interest to look at
+local function ScanPointsOfInterest()
+    PointsOfInterest = {}
+    
+    -- Add other players
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local char = plr.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                table.insert(PointsOfInterest, {
+                    Position = char.HumanoidRootPart.Position,
+                    Type = "player",
+                    Name = plr.Name,
+                    Priority = 10
+                })
+            end
+        end
+    end
+    
+    -- Add large objects in the world
+    for _, obj in ipairs(WS:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.Size.Magnitude > 10 and obj ~= Root then
+            table.insert(PointsOfInterest, {
+                Position = obj.Position,
+                Type = "object",
+                Name = obj.Name,
+                Priority = 5
+            })
+        end
+    end
+    
+    -- Add random points in explore radius
+    for i = 1, 5 do
+        table.insert(PointsOfInterest, {
+            Position = Root.Position + Vector3.new(
+                math.random(-AIExploreRadius, AIExploreRadius),
+                0,
+                math.random(-AIExploreRadius, AIExploreRadius)
+            ),
+            Type = "random",
+            Priority = 1
+        })
+    end
+end
+
+-- Smooth look at target using body rotation
+local function SmoothLookAt(targetPos, dt)
     if not Root or not targetPos then return end
     
     local direction = (targetPos - Root.Position).Unit
     local angle = math.atan2(-direction.X, -direction.Z)
     
-    -- Smoothly set target angle
+    -- Smoothly interpolate to target angle
     BodyTargetAngle = angle
+    BodyCurrentAngle = BodyCurrentAngle + (BodyTargetAngle - BodyCurrentAngle) * math.min(dt * 8, 1)
+    
+    -- Apply rotation
+    Root.CFrame = CFrame.new(Root.Position) * CFrame.Angles(0, BodyCurrentAngle, 0)
+end
+
+-- Look around at interesting things
+local function LookAround(dt)
+    if #PointsOfInterest == 0 then
+        ScanPointsOfInterest()
+    end
+    
+    if AILookTimer <= 0 then
+        -- Pick a random point of interest
+        local randomPoint = PointsOfInterest[math.random(#PointsOfInterest)]
+        AILookTarget = randomPoint.Position
+        AILookTimer = AILookDuration
+        
+        if randomPoint.Type == "player" then
+            if SCB then SCB("Looking at " .. randomPoint.Name) end
+        end
+    else
+        AILookTimer = AILookTimer - dt
+    end
+    
+    if AILookTarget then
+        SmoothLookAt(AILookTarget, dt)
+    end
 end
 
 -- Create path to target using Roblox PathfindingService
@@ -492,7 +569,6 @@ local function CreatePathTo(targetPos)
         AgentCanClimb = true,
         Costs = {
             Water = 5,
-            -- Add other costs as needed
         }
     })
     
@@ -507,65 +583,115 @@ local function CreatePathTo(targetPos)
     end
 end
 
--- Follow path using Humanoid:MoveTo
-local function FollowPath(path)
-    if not path or not Hum then return false end
+-- Check if path is blocked
+local function IsPathBlocked()
+    if not Path or #Waypoints == 0 then return false end
     
-    local waypoints = path:GetWaypoints()
-    if #waypoints == 0 then return false end
+    -- Check if current waypoint is reachable
+    local currentWaypoint = Waypoints[CurrentWaypointIndex]
+    if not currentWaypoint then return false end
     
-    -- Move to first waypoint
-    Hum:MoveTo(waypoints[1].Position)
+    local distance = (Root.Position - currentWaypoint.Position).Magnitude
     
-    -- Connect to path waypoint reached
-    local connection
-    connection = path.Blocked:Connect(function(blockedWaypointIndex)
-        -- Path blocked, recalculate
-        if connection then connection:Disconnect() end
-        if SCB then SCB("Path blocked, recalculating...") end
-        return false
-    end)
+    -- If we're not getting closer to the waypoint, path might be blocked
+    if distance > 5 and AIActionTimer > 1 then
+        PathBlockedTimer = PathBlockedTimer + 0.1
+        if PathBlockedTimer > PathBlockedThreshold then
+            PathBlockedTimer = 0
+            return true
+        end
+    else
+        PathBlockedTimer = 0
+    end
     
-    table.insert(CN, connection)
-    
-    return true
+    return false
 end
 
--- Walk to target using pathfinding
-local function WalkToTarget(targetPos)
+-- Follow path using Humanoid:MoveTo
+local function FollowPath()
+    if not Path or #Waypoints == 0 then
+        if Hum then Hum:MoveTo(Root.Position) end -- Stop moving
+        return false
+    end
+    
+    -- Check if path is blocked
+    if IsPathBlocked() then
+        AIPathBlocked = true
+        if Hum then Hum:MoveTo(Root.Position) end -- Stop moving
+        return false
+    end
+    
+    -- Move to current waypoint
+    local currentWaypoint = Waypoints[CurrentWaypointIndex]
+    if currentWaypoint then
+        Hum:MoveTo(currentWaypoint.Position)
+        
+        -- Check if we've reached the waypoint
+        local distance = (Root.Position - currentWaypoint.Position).Magnitude
+        if distance < 3 then
+            CurrentWaypointIndex = CurrentWaypointIndex + 1
+            if CurrentWaypointIndex > #Waypoints then
+                -- Reached end of path
+                Path = nil
+                Waypoints = {}
+                CurrentWaypointIndex = 1
+                return true -- Reached destination
+            end
+        end
+    end
+    
+    return false
+end
+
+-- Walk to target with pathfinding and obstacle detection
+local function WalkToTarget(targetPos, dt)
     if not Root or not targetPos or not Hum then return false end
     
     local distance = (targetPos - Root.Position).Magnitude
     
-    -- If close enough, just move directly
-    if distance < 10 then
+    -- If very close, just move directly
+    if distance < 5 then
         Hum:MoveTo(targetPos)
-        -- Look at where we're going
-        LookAt(targetPos)
-        return distance <= 3 -- Return true if reached
+        SmoothLookAt(targetPos, dt)
+        return distance <= 2
     end
     
-    -- Update path every few seconds
+    -- Update path periodically
     local currentTime = tick()
     if currentTime - LastPathUpdate > PathUpdateInterval or not Path then
         Path = CreatePathTo(targetPos)
         LastPathUpdate = currentTime
         
         if Path then
-            FollowPath(Path)
+            Waypoints = Path:GetWaypoints()
+            CurrentWaypointIndex = 1
+            AIPathBlocked = false
             if SCB then SCB("Path found!") end
         else
-            -- Fallback to direct movement
-            Hum:MoveTo(targetPos)
-            if SCB then SCB("No path, going direct") end
+            -- No path found, just wait
+            AIPathBlocked = true
+            if SCB then SCB("No path - waiting") end
         end
     end
     
-    -- Always look at target
-    LookAt(targetPos)
+    -- Follow path if it exists
+    if Path and not AIPathBlocked then
+        local reached = FollowPath()
+        if reached then
+            return true
+        end
+    else
+        -- Path blocked or no path, just stand and look around
+        if Hum then Hum:MoveTo(Root.Position) end -- Stop moving
+        LookAround(dt)
+    end
     
-    -- Check if we're close enough
-    return distance <= 3
+    -- Always look in the direction we're trying to go
+    if not AIPathBlocked then
+        SmoothLookAt(targetPos, dt)
+    end
+    
+    return false
 end
 
 -- Stop moving
@@ -595,42 +721,53 @@ end
 
 -- Explore Mode - Wander around looking at things
 local function ExploreMode(dt)
-    if AIState == "idle" then
-        -- Pick a random direction to explore
+    -- Scan for points of interest periodically
+    if math.random() < 0.01 then
+        ScanPointsOfInterest()
+    end
+    
+    if AIState == "idle" or AIState == "exploring" then
+        -- Pick a random point to explore
         AITargetPosition = Root.Position + Vector3.new(
             math.random(-AIExploreRadius, AIExploreRadius),
             0,
             math.random(-AIExploreRadius, AIExploreRadius)
         )
         AIState = "walking"
-        if SCB then SCB("AI: Exploring...") end
+        AIWaitTime = 0
+        if SCB then SCB("Exploring...") end
     end
     
     if AIState == "walking" then
-        local reached = WalkToTarget(AITargetPosition)
+        local reached = WalkToTarget(AITargetPosition, dt)
         
-        -- Look around occasionally
-        if AILookTimer <= 0 then
-            -- Look at something random
-            AILookTarget = Root.Position + Vector3.new(
-                math.random(-20, 20),
-                0,
-                math.random(-20, 20)
-            )
-            LookAt(AILookTarget)
-            AILookTimer = AILookDuration
-        else
-            AILookTimer = AILookTimer - dt
+        -- Look around while walking
+        LookAround(dt)
+        
+        if reached or AIPathBlocked then
+            if AIPathBlocked then
+                AIState = "waiting"
+                AIWaitTime = 3 -- Wait 3 seconds when path blocked
+                if SCB then SCB("Path blocked - waiting") end
+            else
+                AIState = "looking"
+                AIActionTimer = 2
+            end
         end
-        
-        if reached then
-            AIState = "looking"
-            AIActionTimer = 2
+    end
+    
+    if AIState == "waiting" then
+        AIWaitTime = AIWaitTime - dt
+        LookAround(dt)
+        if AIWaitTime <= 0 then
+            AIState = "idle"
+            AIPathBlocked = false
         end
     end
     
     if AIState == "looking" then
         AIActionTimer = AIActionTimer - dt
+        LookAround(dt)
         if AIActionTimer <= 0 then
             AIState = "idle"
         end
@@ -640,7 +777,7 @@ end
 -- Follow Mode - Follow selected player with pathfinding
 local function FollowMode(dt)
     if not AITargetPlayer then
-        if SCB then SCB("AI: No target to follow") end
+        if SCB then SCB("No target to follow") end
         AIMode = "explore"
         return
     end
@@ -654,18 +791,36 @@ local function FollowMode(dt)
     local targetPos = char.HumanoidRootPart.Position
     local distance = (targetPos - Root.Position).Magnitude
     
-    -- Always look at the target
-    LookAt(targetPos + Vector3.new(0, 3, 0))
+    -- Scan for points of interest periodically
+    if math.random() < 0.02 then
+        ScanPointsOfInterest()
+    end
     
     if distance > AIFollowDistance then
-        -- Follow the target using pathfinding
-        WalkToTarget(targetPos)
-        AIState = "following"
-        if SCB then SCB("AI: Following " .. AITargetPlayer.Name) end
+        -- Try to follow the target
+        local reached = WalkToTarget(targetPos, dt)
+        
+        if AIPathBlocked then
+            -- Path blocked, just stand and look at target
+            if Hum then Hum:MoveTo(Root.Position) end
+            SmoothLookAt(targetPos + Vector3.new(0, 3, 0), dt)
+            AIState = "waiting"
+            if SCB then SCB("Path to " .. AITargetPlayer.Name .. " blocked - waiting") end
+        else
+            AIState = "following"
+            -- Look at target while following
+            SmoothLookAt(targetPos + Vector3.new(0, 3, 0), dt)
+        end
     else
         -- Close enough, just watch
         StopMoving()
+        SmoothLookAt(targetPos + Vector3.new(0, 3, 0), dt)
         AIState = "watching"
+    end
+    
+    -- Also look around occasionally while following
+    if math.random() < 0.01 then
+        LookAround(dt)
     end
 end
 
@@ -680,14 +835,14 @@ local function HideMode(dt)
         )
         AITargetPosition = AIHideSpot
         AIState = "hiding"
-        if SCB then SCB("AI: Hiding...") end
+        if SCB then SCB("Hiding...") end
     end
     
     if AIState == "hiding" then
-        local reached = WalkToTarget(AITargetPosition)
+        local reached = WalkToTarget(AITargetPosition, dt)
         
         if reached then
-            -- Found hiding spot, crouch and look around
+            -- Found hiding spot, stop and look around
             StopMoving()
             AIState = "hidden"
             AIActionTimer = 5
@@ -696,19 +851,7 @@ local function HideMode(dt)
     
     if AIState == "hidden" then
         AIActionTimer = AIActionTimer - dt
-        
-        -- Look around while hidden
-        if AILookTimer <= 0 then
-            AILookTarget = Root.Position + Vector3.new(
-                math.random(-10, 10),
-                0,
-                math.random(-10, 10)
-            )
-            LookAt(AILookTarget)
-            AILookTimer = 1
-        else
-            AILookTimer = AILookTimer - dt
-        end
+        LookAround(dt)
         
         if AIActionTimer <= 0 then
             AIState = "idle"
@@ -745,24 +888,20 @@ local function SitMode(dt)
         
         if distance > 3 then
             -- Walk to them
-            WalkToTarget(sittingPos)
-            LookAt(sittingPos + Vector3.new(0, 3, 0))
+            WalkToTarget(sittingPos, dt)
+            SmoothLookAt(sittingPos + Vector3.new(0, 3, 0), dt)
             AIState = "walking_to_sit"
-            if SCB then SCB("AI: Walking to sit with " .. sittingPlayer.Name) end
+            if SCB then SCB("Walking to sit with " .. sittingPlayer.Name) end
         else
             -- Sit down next to them
             StopMoving()
             SitDown()
             AIState = "sitting"
             AIActionTimer = AISitDuration
-            -- Look at them
-            LookAt(sittingPos + Vector3.new(0, 3, 0))
+            SmoothLookAt(sittingPos + Vector3.new(0, 3, 0), dt)
         end
     else
         -- No one sitting, just explore
-        if AIState ~= "exploring" then
-            AIState = "exploring"
-        end
         ExploreMode(dt)
     end
     
@@ -772,6 +911,8 @@ local function SitMode(dt)
             StandUp()
             AIState = "idle"
         end
+        -- Look around while sitting
+        LookAround(dt)
     end
 end
 
@@ -800,10 +941,10 @@ local function FleeMode(dt)
         
         -- Run away
         AITargetPosition = Root.Position + fleeDirection * 50
-        WalkToTarget(AITargetPosition)
+        WalkToTarget(AITargetPosition, dt)
         AIState = "fleeing"
         
-        if SCB then SCB("AI: Fleeing! " .. math.floor(AIFleeTimer) .. "s left") end
+        if SCB then SCB("Fleeing! " .. math.floor(AIFleeTimer) .. "s left") end
     else
         -- Done fleeing
         AIMode = "explore"
@@ -835,23 +976,26 @@ local function SetAIMode(mode)
     AIState = "idle"
     StopMoving()
     StandUp()
-    Path = nil -- Reset path
+    Path = nil
+    Waypoints = {}
+    AIPathBlocked = false
+    ScanPointsOfInterest()
     
     if mode == "explore" then
-        if SCB then SCB("AI Mode: Explore - Wandering around") end
+        if SCB then SCB("Mode: Explore - Wandering and looking around") end
     elseif mode == "follow" then
         if AITargetPlayer then
-            if SCB then SCB("AI Mode: Follow - Following " .. AITargetPlayer.Name) end
+            if SCB then SCB("Mode: Follow - Following " .. AITargetPlayer.Name) end
         else
-            if SCB then SCB("AI Mode: Follow - Select a player first") end
+            if SCB then SCB("Mode: Follow - Select a player first") end
         end
     elseif mode == "hide" then
-        if SCB then SCB("AI Mode: Hide - Finding places to hide") end
+        if SCB then SCB("Mode: Hide - Finding places to hide") end
     elseif mode == "sit" then
-        if SCB then SCB("AI Mode: Sit - Looking for sitting players") end
+        if SCB then SCB("Mode: Sit - Looking for sitting players") end
     elseif mode == "flee" then
         AIFleeTimer = AIFleeDuration
-        if SCB then SCB("AI Mode: Flee - Running away!") end
+        if SCB then SCB("Mode: Flee - Running away!") end
     end
 end
 
@@ -875,6 +1019,7 @@ local function ToggleAIControl()
         end
         
         -- Initialize AI
+        ScanPointsOfInterest()
         SetAIMode("explore")
         
         -- Main AI loop
@@ -1185,7 +1330,7 @@ local function CreatePlayerSelector(parent, y)
             
             btn.MouseButton1Click:Connect(function()
                 AITargetPlayer = plr
-                if SCB then SCB("AI Target: " .. plr.Name) end
+                if SCB then SCB("Target: " .. plr.Name) end
                 
                 -- Highlight selected
                 for _, b in ipairs(listFrame:GetChildren()) do
@@ -1769,7 +1914,7 @@ SH(AITab, 520, "AI SETTINGS")
 
 NSlider(AITab, 550, "Walk Speed", 8, 32, AIWalkSpeed, function(val) 
     AIWalkSpeed = val 
-    if SCB then SCB("AI Walk Speed: " .. val) end
+    if SCB then SCB("Walk Speed: " .. val) end
 end, false)
 
 NSlider(AITab, 616, "Explore Radius", 10, 50, AIExploreRadius, function(val) 
@@ -1850,7 +1995,7 @@ end, true)
 
 NSlider(SettingsTab, 410, "Slow Multiplier", 0.1, 1.0, AnchorSlowMultiplier, function(val) 
     AnchorSlowMultiplier = val 
-    if SCB then SCB("Speed when anchored: " .. math.floor(val * 100) .. "%") end
+    if SCB then SCB("Slow Multiplier: " .. math.floor(val * 100) .. "%") end
 end, false)
 
 -- CREEPY PASTA SETTINGS
@@ -1933,4 +2078,4 @@ end)
 MF.BackgroundTransparency = 1
 TweenService:Create(MF, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 0 }):Play()
 
-print("[Fun Hub] Loaded - AI now walks on ground with pathfinding!")
+print("[Fun Hub] Loaded - AI now explores properly and waits at walls!")
