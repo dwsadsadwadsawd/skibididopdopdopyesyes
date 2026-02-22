@@ -62,7 +62,7 @@ local St = {
     ScreenShake = false,
     GravityFlip = false,
     
-    -- Creepy Pasta
+    -- Creepy Pasta (Now using E and Q)
     CreepyPasta = false,
 }
 
@@ -98,8 +98,8 @@ local CreepyPastaConnection = nil
 local CreepyPastaTargetAngle = 0
 local CreepyPastaCurrentAngle = 0
 local CreepyPastaSpeed = 5
-local XButton1Pressed = false
-local XButton2Pressed = false
+local EPressed = false
+local QPressed = false
 
 local function AC(c) table.insert(CN, c) return c end
 
@@ -264,43 +264,28 @@ local function ToggleAnchorInterval()
 end
 
 -- ==============================================
--- FIXED CREEPY PASTA FEATURE
--- Uses InputBegan/InputEnded to detect mouse buttons properly
+-- FIXED CREEPY PASTA FEATURE (Using E and Q)
 -- ==============================================
 local function ToggleCreepyPasta()
     if St.CreepyPasta then
-        -- Set up input handlers for mouse buttons
+        -- Set up input handlers for E and Q
         local function onInputBegan(input, gameProcessed)
             if gameProcessed then return end
             
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                -- Left click - ignore
-            elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
-                -- Right click - ignore
-            elseif input.UserInputType == Enum.UserInputType.MouseButton3 then
-                -- Middle click - we can use this for something
-                XButton1Pressed = true
-            else
-                -- For other mouse buttons, we can use the KeyCode
-                if input.KeyCode == Enum.KeyCode.ButtonX1 then
-                    XButton1Pressed = true
-                elseif input.KeyCode == Enum.KeyCode.ButtonX2 then
-                    XButton2Pressed = true
-                end
+            if input.KeyCode == Enum.KeyCode.E then
+                EPressed = true
+            elseif input.KeyCode == Enum.KeyCode.Q then
+                QPressed = true
             end
         end
         
         local function onInputEnded(input, gameProcessed)
             if gameProcessed then return end
             
-            if input.UserInputType == Enum.UserInputType.MouseButton3 then
-                XButton1Pressed = false
-            else
-                if input.KeyCode == Enum.KeyCode.ButtonX1 then
-                    XButton1Pressed = false
-                elseif input.KeyCode == Enum.KeyCode.ButtonX2 then
-                    XButton2Pressed = false
-                end
+            if input.KeyCode == Enum.KeyCode.E then
+                EPressed = false
+            elseif input.KeyCode == Enum.KeyCode.Q then
+                QPressed = false
             end
         end
         
@@ -318,13 +303,13 @@ local function ToggleCreepyPasta()
         CreepyPastaConnection = RunService.Heartbeat:Connect(function(dt)
             if not St.CreepyPasta or not Root then return end
             
-            -- Set target angle based on button states
-            if XButton1Pressed and XButton2Pressed then
+            -- Set target angle based on key states
+            if EPressed and QPressed then
                 CreepyPastaTargetAngle = 0 -- Look straight when both pressed
-            elseif XButton1Pressed then
-                CreepyPastaTargetAngle = math.rad(60) -- Look right
-            elseif XButton2Pressed then
-                CreepyPastaTargetAngle = math.rad(-60) -- Look left
+            elseif EPressed then
+                CreepyPastaTargetAngle = math.rad(60) -- E = Look right
+            elseif QPressed then
+                CreepyPastaTargetAngle = math.rad(-60) -- Q = Look left
             else
                 CreepyPastaTargetAngle = 0 -- Look straight
             end
@@ -359,7 +344,7 @@ local function ToggleCreepyPasta()
         end)
         table.insert(CN, CreepyPastaConnection)
         
-        if SCB then SCB("Creepy Pasta enabled - Use mouse buttons") end
+        if SCB then SCB("Creepy Pasta enabled - Use E (right) and Q (left)") end
         
     elseif CreepyPastaConnection then
         CreepyPastaConnection:Disconnect()
@@ -371,8 +356,8 @@ local function ToggleCreepyPasta()
             neck.C0 = CFrame.new(0, 1, 0) * CFrame.Angles(0, 0, 0)
         end
         
-        XButton1Pressed = false
-        XButton2Pressed = false
+        EPressed = false
+        QPressed = false
         CreepyPastaTargetAngle = 0
         CreepyPastaCurrentAngle = 0
         if SCB then SCB("Creepy Pasta disabled") end
@@ -1008,7 +993,7 @@ NTog(FunnyTab, 372, "Drunk Mode", "DrunkMode", function() ToggleDrunkMode() end)
 NTog(FunnyTab, 414, "Rubber Band", "RubberBand", function() ToggleRubberBand() end)
 NTog(FunnyTab, 456, "Screen Shake", "ScreenShake", function() ToggleScreenShake() end)
 NTog(FunnyTab, 498, "Gravity Flip", "GravityFlip", function() ToggleGravityFlip() end)
-NTog(FunnyTab, 540, "Creepy Pasta (Mouse Buttons)", "CreepyPasta", function() ToggleCreepyPasta() end)
+NTog(FunnyTab, 540, "Creepy Pasta (E/Q)", "CreepyPasta", function() ToggleCreepyPasta() end)
 
 -- Settings Tab
 local SettingsTab = NewTab()
@@ -1140,4 +1125,4 @@ end)
 MF.BackgroundTransparency = 1
 TweenService:Create(MF, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 0 }):Play()
 
-print("[Fun Hub] Loaded - Fixed Creepy Pasta feature")
+print("[Fun Hub] Loaded - Creepy Pasta uses E and Q keys!")
