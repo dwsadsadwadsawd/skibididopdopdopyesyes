@@ -51,7 +51,7 @@ local St = {
     -- Funny/Troll
     FakeLag = false,
     WifiLag = false,
-    AnchorInterval = false, -- This will slow you down
+    AnchorInterval = false,
     SpinBot = false,
     SitSpin = false,
     Float = false,
@@ -70,7 +70,7 @@ local CN = {} -- Connections
 local SCB = nil -- Status callback
 local LagInterval = 0.1
 local WifiLagStrength = 10
-local AnchorSlowAmount = 0.3 -- How much to slow down (0.1 = 90% slower, 0.5 = 50% slower)
+local AnchorSlowMultiplier = 0.3 -- How much to slow movement (0.3 = 30% of normal speed)
 local AnchorIntervalSpeed = 0.2 -- How fast it toggles
 local SpinSpeed = 10
 local FlySpeed = 50
@@ -78,6 +78,7 @@ local WalkSpeedValue = 50
 local JumpPowerValue = 100
 local BodyVelocity = nil
 local BodyGyro = nil
+local AnchorBodyVelocity = nil -- Separate body velocity for anchor slowing
 local SpinConnection = nil
 local FakeLagConnection = nil
 local WifiLagConnection = nil
@@ -166,7 +167,7 @@ local function ToggleNoclip()
     end
 end
 
--- Walkspeed
+-- Walkspeed (keep this for normal walkspeed toggle)
 local function SetWalkspeed()
     if Hum then
         if St.Walkspeed then
@@ -204,12 +205,18 @@ local function ToggleInfiniteJump()
 end
 
 -- ==============================================
--- SIMPLE ANCHOR INTERVAL (Slows you down)
+-- FIXED ANCHOR INTERVAL (Uses BodyVelocity, doesn't affect animations)
 -- ==============================================
 local function ToggleAnchorInterval()
     if St.AnchorInterval then
         local anchored = false
-        local originalWalkSpeed = 16
+        
+        -- Create a BodyVelocity for controlling movement during anchor
+        AnchorBodyVelocity = Instance.new("BodyVelocity")
+        AnchorBodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+        AnchorBodyVelocity.P = 1e6
+        AnchorBodyVelocity.Velocity = Vector3.zero
+        AnchorBodyVelocity.Parent = Root
         
         AnchorIntervalConnection = RunService.Heartbeat:Connect(function()
             if not St.AnchorInterval or not Root then return end
@@ -217,15 +224,28 @@ local function ToggleAnchorInterval()
             anchored = not anchored
             Root.Anchored = anchored
             
-            -- Slow down when anchored
-            if anchored and Hum then
-                Hum.WalkSpeed = Hum.WalkSpeed * AnchorSlowAmount
-            elseif not anchored and Hum then
-                -- Restore speed when unanchored
-                if St.Walkspeed then
-                    Hum.WalkSpeed = WalkSpeedValue
-                else
-                    Hum.WalkSpeed = 16
+            if anchored then
+                -- When anchored, use BodyVelocity to allow slow movement
+                -- This doesn't affect the walking animation
+                if AnchorBodyVelocity then
+                    -- Calculate movement direction based on camera
+                    local moveDir = Vector3.zero
+                    if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + Camera.CFrame.LookVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - Camera.CFrame.LookVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - Camera.CFrame.RightVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + Camera.CFrame.RightVector end
+                    
+                    -- Apply slow movement
+                    if moveDir.Magnitude > 0 then
+                        AnchorBodyVelocity.Velocity = moveDir.Unit * (16 * AnchorSlowMultiplier)
+                    else
+                        AnchorBodyVelocity.Velocity = Vector3.zero
+                    end
+                end
+            else
+                -- When unanchored, stop the BodyVelocity
+                if AnchorBodyVelocity then
+                    AnchorBodyVelocity.Velocity = Vector3.zero
                 end
             end
             
@@ -236,20 +256,16 @@ local function ToggleAnchorInterval()
     elseif AnchorIntervalConnection then
         AnchorIntervalConnection:Disconnect()
         AnchorIntervalConnection = nil
-        if Root then Root.Anchored = false end
-        -- Restore speed
-        if Hum then
-            if St.Walkspeed then
-                Hum.WalkSpeed = WalkSpeedValue
-            else
-                Hum.WalkSpeed = 16
-            end
+        if AnchorBodyVelocity then
+            AnchorBodyVelocity:Destroy()
+            AnchorBodyVelocity = nil
         end
+        if Root then Root.Anchored = false end
     end
 end
 
 -- ==============================================
--- FAKE LAG (Simple version)
+-- FAKE LAG
 -- ==============================================
 local function ToggleFakeLag()
     if St.FakeLag then
@@ -265,7 +281,7 @@ local function ToggleFakeLag()
 end
 
 -- ==============================================
--- WIFI LAG (Simple teleport lag)
+-- WIFI LAG
 -- ==============================================
 local function ToggleWifiLag()
     if St.WifiLag then
@@ -930,17 +946,17 @@ NSlider(SettingsTab, 248, "WiFi Lag Strength", 1, 30, WifiLagStrength, function(
     WifiLagStrength = val 
 end)
 
--- ANCHOR INTERVAL SETTINGS (Simple version that slows you down)
+-- ANCHOR INTERVAL SETTINGS (Fixed - uses BodyVelocity, doesn't affect animations)
 SH(SettingsTab, 314, "ANCHOR INTERVAL")
 
 NSlider(SettingsTab, 344, "Toggle Speed", 0.05, 1.0, AnchorIntervalSpeed, function(val) 
     AnchorIntervalSpeed = val 
-    if SCB then SCB("Anchor Speed: " .. val .. "s") end
+    if SCB then SCB("Toggle Speed: " .. val .. "s") end
 end, true)
 
-NSlider(SettingsTab, 410, "Slow Amount", 0.1, 0.9, AnchorSlowAmount, function(val) 
-    AnchorSlowAmount = val 
-    if SCB then SCB("Slow Amount: " .. (val * 100) .. "%") end
+NSlider(SettingsTab, 410, "Slow Multiplier", 0.1, 1.0, AnchorSlowMultiplier, function(val) 
+    AnchorSlowMultiplier = val 
+    if SCB then SCB("Speed when anchored: " .. math.floor(val * 100) .. "%") end
 end, false)
 
 -- More Settings
@@ -1007,4 +1023,4 @@ end)
 MF.BackgroundTransparency = 1
 TweenService:Create(MF, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 0 }):Play()
 
-print("[Fun Hub] Loaded - Anchor Interval slows you down with adjustable speed!")
+print("[Fun Hub] Loaded - Fixed Anchor Interval (doesn't affect animations)")
