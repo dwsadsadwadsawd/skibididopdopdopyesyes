@@ -1284,6 +1284,11 @@ local function DefenseMode(dt)
         ScanPointsOfInterest()
     end
 end
+
+-- ==============================================
+-- MAIN AI UPDATE FUNCTION (FIXED)
+-- ==============================================
+local function UpdateAI(dt)
     if not St.AIControl or not Root or not Hum then return end
     
     -- Run current mode
@@ -1751,8 +1756,8 @@ SGui.Parent = PGui
 
 local MF = Instance.new("Frame")
 MF.Name = "MainFrame"
-MF.Size = UDim2.new(0, 520, 0, 800)
-MF.Position = UDim2.new(0.5, -260, 0.5, -400)
+MF.Size = UDim2.new(0, 520, 0, 850)
+MF.Position = UDim2.new(0.5, -260, 0.5, -425)
 MF.BackgroundColor3 = CM
 MF.BorderSizePixel = 0
 MF.ClipsDescendants = true
@@ -2250,7 +2255,7 @@ NButton(AITab, 342, "Flee Mode (Test)", Color3.fromRGB(255, 100, 100), function(
     end
 end)
 
-NButton(AITab, 384, "Defense Mode", Color3.fromRGB(255, 150, 50), function() 
+NButton(AITab, 386, "Defense Mode", Color3.fromRGB(255, 150, 50), function() 
     if St.AIControl then
         if AITargetPlayer then
             AIDefendTarget = AITargetPlayer
@@ -2263,21 +2268,21 @@ NButton(AITab, 384, "Defense Mode", Color3.fromRGB(255, 150, 50), function()
 end)
 
 -- Player selector
-CreatePlayerSelector(AITab, 428)
+CreatePlayerSelector(AITab, 430)
 
-SH(AITab, 562, "AI SETTINGS")
+SH(AITab, 564, "AI SETTINGS")
 
-NSlider(AITab, 592, "Walk Speed", 8, 32, AIWalkSpeed, function(val) 
+NSlider(AITab, 594, "Walk Speed", 8, 32, AIWalkSpeed, function(val) 
     AIWalkSpeed = val 
     if SCB then SCB("Walk Speed: " .. val) end
 end, false)
 
-NSlider(AITab, 658, "Explore Radius", 10, 50, AIExploreRadius, function(val) 
+NSlider(AITab, 660, "Explore Radius", 10, 50, AIExploreRadius, function(val) 
     AIExploreRadius = val 
     if SCB then SCB("Explore Radius: " .. val) end
 end, false)
 
-NSlider(AITab, 724, "Follow Distance", 3, 20, AIFollowDistance, function(val) 
+NSlider(AITab, 726, "Follow Distance", 3, 20, AIFollowDistance, function(val) 
     AIFollowDistance = val 
     if SCB then SCB("Follow Distance: " .. val) end
 end, false)
