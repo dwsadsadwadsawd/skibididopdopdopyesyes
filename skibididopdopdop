@@ -134,6 +134,9 @@ local AIExploreRadius = 30
 local AIFollowDistance = 10
 local AIWaitTime = 0
 local AIPathBlocked = false
+local AILastWaypointDistance = nil
+local AIStuckTimer = 0
+local AILastPosition = nil
 
 -- Pathfinding variables
 local Path = nil
@@ -566,9 +569,10 @@ local function CreatePathTo(targetPos)
         AgentRadius = 2,
         AgentHeight = 5,
         AgentCanJump = true,
-        AgentCanClimb = true,
+        AgentCanClimb = false, -- Disable climbing for more predictable paths
+        WaypointSpacing = 4, -- Add waypoint spacing for smoother paths
         Costs = {
-            Water = 5,
+            Water = 20, -- Avoid water more
         }
     })
     
@@ -579,6 +583,7 @@ local function CreatePathTo(targetPos)
     if success and path.Status == Enum.PathStatus.Success then
         return path
     else
+        if SCB then SCB("Path failed: " .. (errorMessage or "Unknown error")) end
         return nil
     end
 end
@@ -592,9 +597,10 @@ local function IsPathBlocked()
     if not currentWaypoint then return false end
     
     local distance = (Root.Position - currentWaypoint.Position).Magnitude
+    local lastDistance = AILastWaypointDistance or distance
     
-    -- If we're not getting closer to the waypoint, path might be blocked
-    if distance > 5 and AIActionTimer > 1 then
+    -- If we're stuck at the same distance for too long, path might be blocked
+    if math.abs(distance - lastDistance) < 0.5 and AIActionTimer > 2 then
         PathBlockedTimer = PathBlockedTimer + 0.1
         if PathBlockedTimer > PathBlockedThreshold then
             PathBlockedTimer = 0
@@ -604,6 +610,7 @@ local function IsPathBlocked()
         PathBlockedTimer = 0
     end
     
+    AILastWaypointDistance = distance
     return false
 end
 
@@ -613,6 +620,23 @@ local function FollowPath()
         if Hum then Hum:MoveTo(Root.Position) end -- Stop moving
         return false
     end
+    
+    -- Check if we're stuck in the same position
+    if AILastPosition then
+        local distanceMoved = (Root.Position - AILastPosition).Magnitude
+        if distanceMoved < 0.5 then
+            AIStuckTimer = AIStuckTimer + 0.1
+            if AIStuckTimer > 3 then -- Stuck for 3 seconds
+                AIPathBlocked = true
+                AIStuckTimer = 0
+                if Hum then Hum:MoveTo(Root.Position) end
+                return false
+            end
+        else
+            AIStuckTimer = 0
+        end
+    end
+    AILastPosition = Root.Position
     
     -- Check if path is blocked
     if IsPathBlocked() then
@@ -624,17 +648,23 @@ local function FollowPath()
     -- Move to current waypoint
     local currentWaypoint = Waypoints[CurrentWaypointIndex]
     if currentWaypoint then
+        -- Set humanoid walkspeed
+        if Hum then
+            Hum.WalkSpeed = AIWalkSpeed
+        end
+        
         Hum:MoveTo(currentWaypoint.Position)
         
         -- Check if we've reached the waypoint
         local distance = (Root.Position - currentWaypoint.Position).Magnitude
-        if distance < 3 then
+        if distance < 4 then -- Increased threshold for better reliability
             CurrentWaypointIndex = CurrentWaypointIndex + 1
             if CurrentWaypointIndex > #Waypoints then
                 -- Reached end of path
                 Path = nil
                 Waypoints = {}
                 CurrentWaypointIndex = 1
+                AIStuckTimer = 0
                 return true -- Reached destination
             end
         end
@@ -650,15 +680,18 @@ local function WalkToTarget(targetPos, dt)
     local distance = (targetPos - Root.Position).Magnitude
     
     -- If very close, just move directly
-    if distance < 5 then
-        Hum:MoveTo(targetPos)
+    if distance < 8 then -- Increased from 5 to 8 for better direct movement
+        if Hum then
+            Hum.WalkSpeed = AIWalkSpeed
+            Hum:MoveTo(targetPos)
+        end
         SmoothLookAt(targetPos, dt)
-        return distance <= 2
+        return distance <= 3 -- Increased threshold
     end
     
-    -- Update path periodically
+    -- Update path periodically or when we don't have one
     local currentTime = tick()
-    if currentTime - LastPathUpdate > PathUpdateInterval or not Path then
+    if currentTime - LastPathUpdate > PathUpdateInterval or not Path or AIPathBlocked then
         Path = CreatePathTo(targetPos)
         LastPathUpdate = currentTime
         
@@ -666,23 +699,32 @@ local function WalkToTarget(targetPos, dt)
             Waypoints = Path:GetWaypoints()
             CurrentWaypointIndex = 1
             AIPathBlocked = false
-            if SCB then SCB("Path found!") end
+            AIStuckTimer = 0
+            AILastPosition = Root.Position
+            if SCB then SCB("New path created with " .. #Waypoints .. " waypoints") end
         else
-            -- No path found, just wait
+            -- No path found, try direct movement for a bit
             AIPathBlocked = true
-            if SCB then SCB("No path - waiting") end
+            if Hum then
+                Hum.WalkSpeed = AIWalkSpeed
+                Hum:MoveTo(targetPos)
+            end
+            if SCB then SCB("No path found - trying direct movement") end
         end
     end
     
-    -- Follow path if it exists
+    -- Follow path if it exists and isn't blocked
     if Path and not AIPathBlocked then
         local reached = FollowPath()
         if reached then
             return true
         end
     else
-        -- Path blocked or no path, just stand and look around
-        if Hum then Hum:MoveTo(Root.Position) end -- Stop moving
+        -- Path blocked or no path, try direct movement briefly
+        if Hum then
+            Hum.WalkSpeed = AIWalkSpeed
+            Hum:MoveTo(targetPos)
+        end
         LookAround(dt)
     end
     
@@ -726,33 +768,42 @@ local function ExploreMode(dt)
         ScanPointsOfInterest()
     end
     
-    if AIState == "idle" or AIState == "exploring" then
-        -- Pick a random point to explore
-        AITargetPosition = Root.Position + Vector3.new(
-            math.random(-AIExploreRadius, AIExploreRadius),
-            0,
-            math.random(-AIExploreRadius, AIExploreRadius)
-        )
+    if AIState == "idle" then
+        -- Pick a random point to explore that's not too close
+        local attempts = 0
+        repeat
+            AITargetPosition = Root.Position + Vector3.new(
+                math.random(-AIExploreRadius, AIExploreRadius),
+                0,
+                math.random(-AIExploreRadius, AIExploreRadius)
+            )
+            attempts = attempts + 1
+        until (AITargetPosition - Root.Position).Magnitude > 10 or attempts > 5
+        
         AIState = "walking"
         AIWaitTime = 0
-        if SCB then SCB("Exploring...") end
+        AIActionTimer = 0
+        if SCB then SCB("Exploring new area...") end
     end
     
     if AIState == "walking" then
+        AIActionTimer = AIActionTimer + dt
         local reached = WalkToTarget(AITargetPosition, dt)
         
         -- Look around while walking
-        LookAround(dt)
+        if math.random() < 0.02 then
+            LookAround(dt)
+        end
         
-        if reached or AIPathBlocked then
-            if AIPathBlocked then
-                AIState = "waiting"
-                AIWaitTime = 3 -- Wait 3 seconds when path blocked
-                if SCB then SCB("Path blocked - waiting") end
-            else
-                AIState = "looking"
-                AIActionTimer = 2
-            end
+        if reached then
+            AIState = "looking"
+            AIActionTimer = math.random(2, 4) -- Random look time
+            if SCB then SCB("Reached destination - looking around") end
+        elseif AIPathBlocked and AIActionTimer > 5 then
+            -- Been trying to reach target for too long, give up
+            AIState = "waiting"
+            AIWaitTime = math.random(2, 4)
+            if SCB then SCB("Path blocked too long - waiting") end
         end
     end
     
@@ -796,30 +847,48 @@ local function FollowMode(dt)
         ScanPointsOfInterest()
     end
     
-    if distance > AIFollowDistance then
+    if distance > AIFollowDistance + 5 then -- Add buffer to prevent constant switching
         -- Try to follow the target
+        AIActionTimer = AIActionTimer + dt
         local reached = WalkToTarget(targetPos, dt)
         
-        if AIPathBlocked then
-            -- Path blocked, just stand and look at target
-            if Hum then Hum:MoveTo(Root.Position) end
+        if AIPathBlocked and AIActionTimer > 3 then
+            -- Path blocked for too long, just stand and look at target
+            if Hum then 
+                Hum:MoveTo(Root.Position)
+                Hum.WalkSpeed = 16 -- Reset to normal speed
+            end
             SmoothLookAt(targetPos + Vector3.new(0, 3, 0), dt)
             AIState = "waiting"
-            if SCB then SCB("Path to " .. AITargetPlayer.Name .. " blocked - waiting") end
+            AIActionTimer = 0
+            if SCB then SCB("Can't reach " .. AITargetPlayer.Name .. " - watching from distance") end
         else
             AIState = "following"
             -- Look at target while following
             SmoothLookAt(targetPos + Vector3.new(0, 3, 0), dt)
         end
+    elseif distance < AIFollowDistance - 2 then -- Too close, back away a bit
+        local awayDirection = (Root.Position - targetPos).Unit
+        local backAwayPos = Root.Position + awayDirection * 3
+        if Hum then
+            Hum.WalkSpeed = AIWalkSpeed * 0.5 -- Move slower when backing away
+            Hum:MoveTo(backAwayPos)
+        end
+        SmoothLookAt(targetPos + Vector3.new(0, 3, 0), dt)
+        AIState = "adjusting_distance"
     else
-        -- Close enough, just watch
-        StopMoving()
+        -- Perfect distance, just watch
+        if Hum then 
+            Hum:MoveTo(Root.Position)
+            Hum.WalkSpeed = 16
+        end
         SmoothLookAt(targetPos + Vector3.new(0, 3, 0), dt)
         AIState = "watching"
+        AIActionTimer = 0
     end
     
     -- Also look around occasionally while following
-    if math.random() < 0.01 then
+    if math.random() < 0.005 and AIState == "watching" then
         LookAround(dt)
     end
 end
@@ -979,6 +1048,9 @@ local function SetAIMode(mode)
     Path = nil
     Waypoints = {}
     AIPathBlocked = false
+    AIStuckTimer = 0
+    AILastPosition = nil
+    AIActionTimer = 0
     ScanPointsOfInterest()
     
     if mode == "explore" then
