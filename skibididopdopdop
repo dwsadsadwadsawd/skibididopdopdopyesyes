@@ -62,8 +62,9 @@ local St = {
     ScreenShake = false,
     GravityFlip = false,
     
-    -- Creepy Pasta (Now using E and Q)
-    CreepyPasta = false,
+    -- Creepy Pasta Modes
+    CreepyPastaHead = false,  -- Only head moves
+    CreepyPastaBody = false,  -- Whole body rotates
 }
 
 -- ==============================================
@@ -94,12 +95,17 @@ local ScreenShakeConnection = nil
 local OriginalGravity = nil
 
 -- Creepy Pasta variables
-local CreepyPastaConnection = nil
-local CreepyPastaTargetAngle = 0
-local CreepyPastaCurrentAngle = 0
-local CreepyPastaSpeed = 5
-local EPressed = false
-local QPressed = false
+local CreepyPastaHeadConnection = nil
+local CreepyPastaBodyConnection = nil
+local HeadAngle = 0
+local BodyAngle = 0
+local HeadAngleIncrement = math.rad(2) -- 2 degrees per press
+local BodyAngleIncrement = math.rad(2) -- 2 degrees per press
+
+-- Key press tracking
+local EHoldTime = 0
+local QHoldTime = 0
+local KeyHoldThreshold = 0.1 -- How long to hold before continuous movement
 
 local function AC(c) table.insert(CN, c) return c end
 
@@ -264,18 +270,39 @@ local function ToggleAnchorInterval()
 end
 
 -- ==============================================
--- FIXED CREEPY PASTA FEATURE (Using E and Q)
+-- CREEPY PASTA HEAD MODE (Only head moves, stays in position)
 -- ==============================================
-local function ToggleCreepyPasta()
-    if St.CreepyPasta then
-        -- Set up input handlers for E and Q
+local function ToggleCreepyPastaHead()
+    if St.CreepyPastaHead then
+        -- Find neck joint for head turning
+        local neck = Char:FindFirstChild("Head") and Char.Head:FindFirstChild("Neck")
+        
+        if not neck then
+            if SCB then SCB("No neck joint found - can't use head mode") end
+            St.CreepyPastaHead = false
+            return
+        end
+        
+        -- Key tracking variables
+        local ePressed = false
+        local qPressed = false
+        local lastETime = 0
+        local lastQTime = 0
+        
+        -- Input handlers
         local function onInputBegan(input, gameProcessed)
             if gameProcessed then return end
             
             if input.KeyCode == Enum.KeyCode.E then
-                EPressed = true
+                ePressed = true
+                lastETime = tick()
+                -- Single increment on press
+                HeadAngle = HeadAngle + HeadAngleIncrement
             elseif input.KeyCode == Enum.KeyCode.Q then
-                QPressed = true
+                qPressed = true
+                lastQTime = tick()
+                -- Single increment on press
+                HeadAngle = HeadAngle - HeadAngleIncrement
             end
         end
         
@@ -283,84 +310,136 @@ local function ToggleCreepyPasta()
             if gameProcessed then return end
             
             if input.KeyCode == Enum.KeyCode.E then
-                EPressed = false
+                ePressed = false
             elseif input.KeyCode == Enum.KeyCode.Q then
-                QPressed = false
+                qPressed = false
             end
         end
         
-        -- Connect the input handlers
+        -- Connect input handlers
         local inputBeganConn = UserInputService.InputBegan:Connect(onInputBegan)
         local inputEndedConn = UserInputService.InputEnded:Connect(onInputEnded)
         table.insert(CN, inputBeganConn)
         table.insert(CN, inputEndedConn)
         
-        -- Find neck joint for head turning
-        local neck = Char:FindFirstChild("Head") and Char.Head:FindFirstChild("Neck")
-        local useRootRotation = not neck
-        
-        -- Main update loop
-        CreepyPastaConnection = RunService.Heartbeat:Connect(function(dt)
-            if not St.CreepyPasta or not Root then return end
+        -- Continuous movement when holding
+        local holdConnection = RunService.Heartbeat:Connect(function(dt)
+            if not St.CreepyPastaHead then return end
             
-            -- Set target angle based on key states
-            if EPressed and QPressed then
-                CreepyPastaTargetAngle = 0 -- Look straight when both pressed
-            elseif EPressed then
-                CreepyPastaTargetAngle = math.rad(60) -- E = Look right
-            elseif QPressed then
-                CreepyPastaTargetAngle = math.rad(-60) -- Q = Look left
-            else
-                CreepyPastaTargetAngle = 0 -- Look straight
+            local currentTime = tick()
+            
+            -- E key held continuous movement
+            if ePressed and (currentTime - lastETime) > KeyHoldThreshold then
+                HeadAngle = HeadAngle + HeadAngleIncrement * (dt * 30) -- Scale by delta time
+                lastETime = currentTime
             end
             
-            -- Smoothly interpolate current angle to target angle
-            CreepyPastaCurrentAngle = CreepyPastaCurrentAngle + (CreepyPastaTargetAngle - CreepyPastaCurrentAngle) * math.min(dt * CreepyPastaSpeed, 1)
+            -- Q key held continuous movement
+            if qPressed and (currentTime - lastQTime) > KeyHoldThreshold then
+                HeadAngle = HeadAngle - HeadAngleIncrement * (dt * 30) -- Scale by delta time
+                lastQTime = currentTime
+            end
             
-            if useRootRotation then
-                -- Get current movement direction (for keeping forward movement consistent)
-                local moveDir = Vector3.zero
-                if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + Camera.CFrame.LookVector end
-                if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - Camera.CFrame.LookVector end
-                if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - Camera.CFrame.RightVector end
-                if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + Camera.CFrame.RightVector end
-                
-                -- If moving, preserve movement direction while rotating body
-                if moveDir.Magnitude > 0.1 then
-                    -- Rotate the Root CFrame but keep the forward direction aligned with movement
-                    local currentCF = Root.CFrame
-                    local newCF = CFrame.new(currentCF.Position) * CFrame.Angles(0, CreepyPastaCurrentAngle, 0)
-                    Root.CFrame = newCF
-                else
-                    -- Just rotate in place
-                    Root.CFrame = CFrame.new(Root.Position) * CFrame.Angles(0, CreepyPastaCurrentAngle, 0)
-                end
-            else
-                -- Use neck joint for more natural head turning
-                if neck then
-                    neck.C0 = CFrame.new(0, 1, 0) * CFrame.Angles(0, CreepyPastaCurrentAngle, 0)
-                end
+            -- Apply head rotation
+            if neck then
+                neck.C0 = CFrame.new(0, 1, 0) * CFrame.Angles(0, HeadAngle, 0)
             end
         end)
-        table.insert(CN, CreepyPastaConnection)
+        table.insert(CN, holdConnection)
         
-        if SCB then SCB("Creepy Pasta enabled - Use E (right) and Q (left)") end
+        if SCB then SCB("Head Mode: Use E/Q to move head (stays in place)") end
         
-    elseif CreepyPastaConnection then
-        CreepyPastaConnection:Disconnect()
-        CreepyPastaConnection = nil
+    elseif CreepyPastaHeadConnection then
+        CreepyPastaHeadConnection:Disconnect()
+        CreepyPastaHeadConnection = nil
         
-        -- Reset neck if it exists
+        -- Reset head to neutral
         local neck = Char:FindFirstChild("Head") and Char.Head:FindFirstChild("Neck")
         if neck then
             neck.C0 = CFrame.new(0, 1, 0) * CFrame.Angles(0, 0, 0)
         end
         
-        EPressed = false
-        QPressed = false
-        CreepyPastaTargetAngle = 0
-        CreepyPastaCurrentAngle = 0
-        if SCB then SCB("Creepy Pasta disabled") end
+        HeadAngle = 0
+        if SCB then SCB("Head Mode disabled") end
+    end
+end
+
+-- ==============================================
+-- CREEPY PASTA BODY MODE (Whole body rotates, stays in position)
+-- ==============================================
+local function ToggleCreepyPastaBody()
+    if St.CreepyPastaBody then
+        -- Key tracking variables
+        local ePressed = false
+        local qPressed = false
+        local lastETime = 0
+        local lastQTime = 0
+        
+        -- Input handlers
+        local function onInputBegan(input, gameProcessed)
+            if gameProcessed then return end
+            
+            if input.KeyCode == Enum.KeyCode.E then
+                ePressed = true
+                lastETime = tick()
+                -- Single increment on press
+                BodyAngle = BodyAngle + BodyAngleIncrement
+            elseif input.KeyCode == Enum.KeyCode.Q then
+                qPressed = true
+                lastQTime = tick()
+                -- Single increment on press
+                BodyAngle = BodyAngle - BodyAngleIncrement
+            end
+        end
+        
+        local function onInputEnded(input, gameProcessed)
+            if gameProcessed then return end
+            
+            if input.KeyCode == Enum.KeyCode.E then
+                ePressed = false
+            elseif input.KeyCode == Enum.KeyCode.Q then
+                qPressed = false
+            end
+        end
+        
+        -- Connect input handlers
+        local inputBeganConn = UserInputService.InputBegan:Connect(onInputBegan)
+        local inputEndedConn = UserInputService.InputEnded:Connect(onInputEnded)
+        table.insert(CN, inputBeganConn)
+        table.insert(CN, inputEndedConn)
+        
+        -- Continuous movement when holding
+        local holdConnection = RunService.Heartbeat:Connect(function(dt)
+            if not St.CreepyPastaBody or not Root then return end
+            
+            local currentTime = tick()
+            
+            -- E key held continuous movement
+            if ePressed and (currentTime - lastETime) > KeyHoldThreshold then
+                BodyAngle = BodyAngle + BodyAngleIncrement * (dt * 30)
+                lastETime = currentTime
+            end
+            
+            -- Q key held continuous movement
+            if qPressed and (currentTime - lastQTime) > KeyHoldThreshold then
+                BodyAngle = BodyAngle - BodyAngleIncrement * (dt * 30)
+                lastQTime = currentTime
+            end
+            
+            -- Apply body rotation while preserving position
+            local currentPos = Root.Position
+            Root.CFrame = CFrame.new(currentPos) * CFrame.Angles(0, BodyAngle, 0)
+        end)
+        table.insert(CN, holdConnection)
+        
+        if SCB then SCB("Body Mode: Use E/Q to rotate body (stays in place)") end
+        
+    elseif CreepyPastaBodyConnection then
+        CreepyPastaBodyConnection:Disconnect()
+        CreepyPastaBodyConnection = nil
+        
+        BodyAngle = 0
+        if SCB then SCB("Body Mode disabled") end
     end
 end
 
@@ -587,7 +666,8 @@ local function UL()
     St.RubberBand = false; ToggleRubberBand()
     St.ScreenShake = false; ToggleScreenShake()
     St.GravityFlip = false; ToggleGravityFlip()
-    St.CreepyPasta = false; ToggleCreepyPasta()
+    St.CreepyPastaHead = false; ToggleCreepyPastaHead()
+    St.CreepyPastaBody = false; ToggleCreepyPastaBody()
     
     for _, c in ipairs(CN) do
         pcall(function() c:Disconnect() end)
@@ -616,8 +696,8 @@ SGui.Parent = PGui
 
 local MF = Instance.new("Frame")
 MF.Name = "MainFrame"
-MF.Size = UDim2.new(0, 520, 0, 630)
-MF.Position = UDim2.new(0.5, -260, 0.5, -315)
+MF.Size = UDim2.new(0, 520, 0, 650) -- Increased height for new toggles
+MF.Position = UDim2.new(0.5, -260, 0.5, -325)
 MF.BackgroundColor3 = CM
 MF.BorderSizePixel = 0
 MF.ClipsDescendants = true
@@ -993,7 +1073,8 @@ NTog(FunnyTab, 372, "Drunk Mode", "DrunkMode", function() ToggleDrunkMode() end)
 NTog(FunnyTab, 414, "Rubber Band", "RubberBand", function() ToggleRubberBand() end)
 NTog(FunnyTab, 456, "Screen Shake", "ScreenShake", function() ToggleScreenShake() end)
 NTog(FunnyTab, 498, "Gravity Flip", "GravityFlip", function() ToggleGravityFlip() end)
-NTog(FunnyTab, 540, "Creepy Pasta (E/Q)", "CreepyPasta", function() ToggleCreepyPasta() end)
+NTog(FunnyTab, 540, "Creepy Pasta - Head", "CreepyPastaHead", function() ToggleCreepyPastaHead() end)
+NTog(FunnyTab, 582, "Creepy Pasta - Body", "CreepyPastaBody", function() ToggleCreepyPastaBody() end)
 
 -- Settings Tab
 local SettingsTab = NewTab()
@@ -1061,18 +1142,31 @@ NSlider(SettingsTab, 410, "Slow Multiplier", 0.1, 1.0, AnchorSlowMultiplier, fun
     if SCB then SCB("Speed when anchored: " .. math.floor(val * 100) .. "%") end
 end, false)
 
+-- CREEPY PASTA SETTINGS
+SH(SettingsTab, 476, "CREEPY PASTA")
+
+NSlider(SettingsTab, 506, "Head Rotation Speed", 0.5, 5, math.deg(HeadAngleIncrement), function(val) 
+    HeadAngleIncrement = math.rad(val)
+    if SCB then SCB("Head Speed: " .. val .. " deg/press") end
+end, false)
+
+NSlider(SettingsTab, 572, "Body Rotation Speed", 0.5, 5, math.deg(BodyAngleIncrement), function(val) 
+    BodyAngleIncrement = math.rad(val)
+    if SCB then SCB("Body Speed: " .. val .. " deg/press") end
+end, false)
+
 -- More Settings
-SH(SettingsTab, 476, "MORE SETTINGS")
-NSlider(SettingsTab, 506, "Spin Speed", 1, 30, SpinSpeed, function(val) 
+SH(SettingsTab, 638, "MORE SETTINGS")
+NSlider(SettingsTab, 668, "Spin Speed", 1, 30, SpinSpeed, function(val) 
     SpinSpeed = val 
 end)
 
-NSlider(SettingsTab, 572, "Walkspeed Value", 16, 200, WalkSpeedValue, function(val) 
+NSlider(SettingsTab, 734, "Walkspeed Value", 16, 200, WalkSpeedValue, function(val) 
     WalkSpeedValue = val 
     if St.Walkspeed then SetWalkspeed() end
 end)
 
-NSlider(SettingsTab, 638, "Jump Power", 50, 200, JumpPowerValue, function(val) 
+NSlider(SettingsTab, 800, "Jump Power", 50, 200, JumpPowerValue, function(val) 
     JumpPowerValue = val 
     if St.Jumppower then SetJumppower() end
 end)
@@ -1125,4 +1219,4 @@ end)
 MF.BackgroundTransparency = 1
 TweenService:Create(MF, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 0 }):Play()
 
-print("[Fun Hub] Loaded - Creepy Pasta uses E and Q keys!")
+print("[Fun Hub] Loaded - Two Creepy Pasta modes (Head & Body) - Stays in place!")
