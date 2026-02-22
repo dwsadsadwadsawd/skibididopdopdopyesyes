@@ -97,7 +97,9 @@ local OriginalGravity = nil
 local CreepyPastaConnection = nil
 local CreepyPastaTargetAngle = 0
 local CreepyPastaCurrentAngle = 0
-local CreepyPastaSpeed = 5 -- How fast the head turns
+local CreepyPastaSpeed = 5
+local XButton1Pressed = false
+local XButton2Pressed = false
 
 local function AC(c) table.insert(CN, c) return c end
 
@@ -262,30 +264,67 @@ local function ToggleAnchorInterval()
 end
 
 -- ==============================================
--- CREEPY PASTA FEATURE
--- Makes character look left/right with mouse buttons without affecting movement or camera
+-- FIXED CREEPY PASTA FEATURE
+-- Uses InputBegan/InputEnded to detect mouse buttons properly
 -- ==============================================
 local function ToggleCreepyPasta()
     if St.CreepyPasta then
-        local neck = Char:FindFirstChild("Head") and Char.Head:FindFirstChild("Neck")
+        -- Set up input handlers for mouse buttons
+        local function onInputBegan(input, gameProcessed)
+            if gameProcessed then return end
+            
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                -- Left click - ignore
+            elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+                -- Right click - ignore
+            elseif input.UserInputType == Enum.UserInputType.MouseButton3 then
+                -- Middle click - we can use this for something
+                XButton1Pressed = true
+            else
+                -- For other mouse buttons, we can use the KeyCode
+                if input.KeyCode == Enum.KeyCode.ButtonX1 then
+                    XButton1Pressed = true
+                elseif input.KeyCode == Enum.KeyCode.ButtonX2 then
+                    XButton2Pressed = true
+                end
+            end
+        end
         
-        -- If no neck joint exists, we'll use Root CFrame rotation instead
+        local function onInputEnded(input, gameProcessed)
+            if gameProcessed then return end
+            
+            if input.UserInputType == Enum.UserInputType.MouseButton3 then
+                XButton1Pressed = false
+            else
+                if input.KeyCode == Enum.KeyCode.ButtonX1 then
+                    XButton1Pressed = false
+                elseif input.KeyCode == Enum.KeyCode.ButtonX2 then
+                    XButton2Pressed = false
+                end
+            end
+        end
+        
+        -- Connect the input handlers
+        local inputBeganConn = UserInputService.InputBegan:Connect(onInputBegan)
+        local inputEndedConn = UserInputService.InputEnded:Connect(onInputEnded)
+        table.insert(CN, inputBeganConn)
+        table.insert(CN, inputEndedConn)
+        
+        -- Find neck joint for head turning
+        local neck = Char:FindFirstChild("Head") and Char.Head:FindFirstChild("Neck")
         local useRootRotation = not neck
         
+        -- Main update loop
         CreepyPastaConnection = RunService.Heartbeat:Connect(function(dt)
             if not St.CreepyPasta or not Root then return end
             
-            -- Check for XButton1 (mouse back button) and XButton2 (mouse forward button)
-            local x1Pressed = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton4) -- XButton1
-            local x2Pressed = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton5) -- XButton2
-            
-            -- Set target angle based on buttons
-            if x1Pressed and x2Pressed then
+            -- Set target angle based on button states
+            if XButton1Pressed and XButton2Pressed then
                 CreepyPastaTargetAngle = 0 -- Look straight when both pressed
-            elseif x1Pressed then
-                CreepyPastaTargetAngle = math.rad(60) -- Look right (60 degrees)
-            elseif x2Pressed then
-                CreepyPastaTargetAngle = math.rad(-60) -- Look left (-60 degrees)
+            elseif XButton1Pressed then
+                CreepyPastaTargetAngle = math.rad(60) -- Look right
+            elseif XButton2Pressed then
+                CreepyPastaTargetAngle = math.rad(-60) -- Look left
             else
                 CreepyPastaTargetAngle = 0 -- Look straight
             end
@@ -320,7 +359,7 @@ local function ToggleCreepyPasta()
         end)
         table.insert(CN, CreepyPastaConnection)
         
-        if SCB then SCB("Creepy Pasta enabled - Use XButton1/XButton2") end
+        if SCB then SCB("Creepy Pasta enabled - Use mouse buttons") end
         
     elseif CreepyPastaConnection then
         CreepyPastaConnection:Disconnect()
@@ -332,6 +371,8 @@ local function ToggleCreepyPasta()
             neck.C0 = CFrame.new(0, 1, 0) * CFrame.Angles(0, 0, 0)
         end
         
+        XButton1Pressed = false
+        XButton2Pressed = false
         CreepyPastaTargetAngle = 0
         CreepyPastaCurrentAngle = 0
         if SCB then SCB("Creepy Pasta disabled") end
@@ -590,7 +631,7 @@ SGui.Parent = PGui
 
 local MF = Instance.new("Frame")
 MF.Name = "MainFrame"
-MF.Size = UDim2.new(0, 520, 0, 630) -- Increased height for new feature
+MF.Size = UDim2.new(0, 520, 0, 630)
 MF.Position = UDim2.new(0.5, -260, 0.5, -315)
 MF.BackgroundColor3 = CM
 MF.BorderSizePixel = 0
@@ -967,7 +1008,7 @@ NTog(FunnyTab, 372, "Drunk Mode", "DrunkMode", function() ToggleDrunkMode() end)
 NTog(FunnyTab, 414, "Rubber Band", "RubberBand", function() ToggleRubberBand() end)
 NTog(FunnyTab, 456, "Screen Shake", "ScreenShake", function() ToggleScreenShake() end)
 NTog(FunnyTab, 498, "Gravity Flip", "GravityFlip", function() ToggleGravityFlip() end)
-NTog(FunnyTab, 540, "Creepy Pasta (XButtons)", "CreepyPasta", function() ToggleCreepyPasta() end)
+NTog(FunnyTab, 540, "Creepy Pasta (Mouse Buttons)", "CreepyPasta", function() ToggleCreepyPasta() end)
 
 -- Settings Tab
 local SettingsTab = NewTab()
@@ -1099,4 +1140,4 @@ end)
 MF.BackgroundTransparency = 1
 TweenService:Create(MF, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 0 }):Play()
 
-print("[Fun Hub] Loaded - Added Creepy Pasta feature (XButton1/XButton2)")
+print("[Fun Hub] Loaded - Fixed Creepy Pasta feature")
