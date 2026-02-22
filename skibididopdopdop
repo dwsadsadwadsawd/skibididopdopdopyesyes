@@ -606,8 +606,8 @@ local function LookAround(dt)
             AILookTarget = randomPoint.Position
             AILookTimer = AILookDuration
             
-            if randomPoint.Type == "player" then
-                local weaponInfo = randomPoint.HasWeapon and (" [" .. randomPoint.WeaponName .. "]") or ""
+            if randomPoint.Type == "player" and randomPoint.Name then
+                local weaponInfo = (randomPoint.HasWeapon and randomPoint.WeaponName) and (" [" .. randomPoint.WeaponName .. "]") or ""
                 if SCB then SCB("Looking at " .. randomPoint.Name .. weaponInfo) end
             end
         end
@@ -969,7 +969,9 @@ local function FollowMode(dt)
             SmoothLookAt(targetPos + Vector3.new(0, 3, 0), dt)
             AIState = "waiting"
             AIActionTimer = 0
-            if SCB then SCB("Can't reach " .. AITargetPlayer.Name .. " - watching from distance") end
+            if SCB and AITargetPlayer and AITargetPlayer.Name then 
+                SCB("Can't reach " .. AITargetPlayer.Name .. " - watching from distance") 
+            end
         else
             AIState = "following"
             -- Look at target while following
@@ -1068,7 +1070,9 @@ local function SitMode(dt)
             WalkToTargetImproved(sittingPos, dt)
             SmoothLookAt(sittingPos + Vector3.new(0, 3, 0), dt)
             AIState = "walking_to_sit"
-            if SCB then SCB("Walking to sit with " .. sittingPlayer.Name) end
+            if SCB and sittingPlayer and sittingPlayer.Name then 
+                SCB("Walking to sit with " .. sittingPlayer.Name) 
+            end
         else
             -- Sit down next to them and jump first
             StopMoving()
@@ -1081,7 +1085,9 @@ local function SitMode(dt)
             AIState = "sitting"
             AIActionTimer = AISitDuration
             SmoothLookAt(sittingPos + Vector3.new(0, 3, 0), dt)
-            if SCB then SCB("Sitting with " .. sittingPlayer.Name) end
+            if SCB and sittingPlayer and sittingPlayer.Name then 
+                SCB("Sitting with " .. sittingPlayer.Name) 
+            end
         end
     else
         -- No one sitting, just explore
@@ -1239,145 +1245,11 @@ local function DefenseMode(dt)
             if weaponTool and weaponTool:IsA("Tool") then
                 weaponTool:Activate()
                 AIShootCooldown = 0.5 -- Half second cooldown
-                if SCB then SCB("Shooting at " .. primaryEnemy.Player.Name .. " with " .. myWeapon) end
-            end
-        end
-        
-    elseif distance > AIFollowDistance then
-        -- No enemies, follow defended player
-        AIState = "defending_follow"
-        WalkToTargetImproved(targetPos, dt)
-        SmoothLookAt(targetPos + Vector3.new(0, 3, 0), dt)
-        
-    else
-        -- Close to defended player, scan for threats
-        AIState = "defending_watch"
-        StopMoving()
-        
-        -- Look around for potential threats
-        if #PointsOfInterest > 0 then
-            LookAround(dt)
-        else
-            SmoothLookAt(targetPos + Vector3.new(0, 3, 0), dt)
-        end
-    end
-    
-    -- Update status
-    if #nearbyEnemies > 0 then
-        local enemyInfo = nearbyEnemies[1]
-        local weaponInfo = enemyInfo.HasWeapon and (" [" .. enemyInfo.WeaponName .. "]") or ""
-        if SCB then SCB("Defending " .. AIDefendTarget.Name .. " from " .. enemyInfo.Player.Name .. weaponInfo) end
-    end
-    
-    -- Scan for points of interest periodically
-    if math.random() < 0.05 then
-        ScanPointsOfInterest()
-    end
-end
-
--- Defense Mode - Protect selected player and shoot enemies
-local function DefenseMode(dt)
-    if not AIDefendTarget then
-        if SCB then SCB("No target to defend") end
-        AIMode = "explore"
-        return
-    end
-    
-    local char = AIDefendTarget.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then
-        AIMode = "explore"
-        return
-    end
-    
-    local targetPos = char.HumanoidRootPart.Position
-    local distance = (targetPos - Root.Position).Magnitude
-    
-    -- Check for enemies near the defended player
-    local nearbyEnemies = {}
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LP and plr ~= AIDefendTarget then
-            local enemyChar = plr.Character
-            if enemyChar and enemyChar:FindFirstChild("HumanoidRootPart") then
-                local enemyPos = enemyChar.HumanoidRootPart.Position
-                local distToTarget = (enemyPos - targetPos).Magnitude
-                
-                if distToTarget <= AIDefendRadius then
-                    -- Check if enemy has weapon
-                    local hasWeapon = false
-                    local weaponName = "None"
-                    for _, weaponItem in ipairs(WeaponNames) do
-                        if enemyChar:FindFirstChild(weaponItem) then
-                            hasWeapon = true
-                            weaponName = weaponItem
-                            break
-                        end
-                    end
-                    
-                    -- Check team (Prison Life team check)
-                    local isEnemy = true
-                    if plr.Team and AIDefendTarget.Team then
-                        isEnemy = plr.Team ~= AIDefendTarget.Team
-                    end
-                    
-                    if isEnemy then
-                        table.insert(nearbyEnemies, {
-                            Player = plr,
-                            Position = enemyPos,
-                            Distance = distToTarget,
-                            HasWeapon = hasWeapon,
-                            WeaponName = weaponName
-                        })
-                    end
+                if SCB and primaryEnemy and primaryEnemy.Player and primaryEnemy.Player.Name and myWeapon then 
+                    SCB("Shooting at " .. primaryEnemy.Player.Name .. " with " .. myWeapon) 
                 end
             end
         end
-    end
-    
-    -- Sort enemies by priority (weapon holders first, then by distance)
-    table.sort(nearbyEnemies, function(a, b)
-        if a.HasWeapon and not b.HasWeapon then return true end
-        if not a.HasWeapon and b.HasWeapon then return false end
-        return a.Distance < b.Distance
-    end)
-    
-    -- Check if we have a weapon to shoot with
-    local myWeapon = nil
-    for _, weaponName in ipairs(WeaponNames) do
-        if Char:FindFirstChild(weaponName) then
-            myWeapon = weaponName
-            break
-        end
-    end
-    
-    if #nearbyEnemies > 0 and myWeapon then
-        -- Combat mode - shoot at nearest enemy
-        local primaryEnemy = nearbyEnemies[1]
-        AIState = "defending_combat"
-        
-        -- Look at enemy
-        SmoothLookAt(primaryEnemy.Position + Vector3.new(0, 3, 0), dt)
-        
-        -- Position ourselves between enemy and defended player
-        local defendPos = targetPos + (Root.Position - primaryEnemy.Position).Unit * 8
-        local distToDefendPos = (defendPos - Root.Position).Magnitude
-        
-        if distToDefendPos > 3 then
-            WalkToTargetImproved(defendPos, dt)
-        else
-            StopMoving()
-        end
-        
-        -- Shoot at enemy (cooldown system)
-        AIShootCooldown = AIShootCooldown - dt
-        if AIShootCooldown <= 0 then
-            -- Simulate shooting by clicking
-            local weaponTool = Char:FindFirstChild(myWeapon)
-            if weaponTool and weaponTool:IsA("Tool") then
-                weaponTool:Activate()
-                AIShootCooldown = 0.5 -- Half second cooldown
-                if SCB then SCB("Shooting at " .. primaryEnemy.Player.Name .. " with " .. myWeapon) end
-            end
-        end
         
     elseif distance > AIFollowDistance then
         -- No enemies, follow defended player
@@ -1401,8 +1273,10 @@ local function DefenseMode(dt)
     -- Update status
     if #nearbyEnemies > 0 then
         local enemyInfo = nearbyEnemies[1]
-        local weaponInfo = enemyInfo.HasWeapon and (" [" .. enemyInfo.WeaponName .. "]") or ""
-        if SCB then SCB("Defending " .. AIDefendTarget.Name .. " from " .. enemyInfo.Player.Name .. weaponInfo) end
+        local weaponInfo = (enemyInfo.HasWeapon and enemyInfo.WeaponName) and (" [" .. enemyInfo.WeaponName .. "]") or ""
+        if SCB and AIDefendTarget and AIDefendTarget.Name and enemyInfo.Player and enemyInfo.Player.Name then 
+            SCB("Defending " .. AIDefendTarget.Name .. " from " .. enemyInfo.Player.Name .. weaponInfo) 
+        end
     end
     
     -- Scan for points of interest periodically
@@ -1445,7 +1319,7 @@ local function SetAIMode(mode)
     if mode == "explore" then
         if SCB then SCB("Mode: Explore - Wandering and looking around") end
     elseif mode == "follow" then
-        if AITargetPlayer then
+        if AITargetPlayer and AITargetPlayer.Name then
             if SCB then SCB("Mode: Follow - Following " .. AITargetPlayer.Name) end
         else
             if SCB then SCB("Mode: Follow - Select a player first") end
@@ -1458,7 +1332,7 @@ local function SetAIMode(mode)
         AIFleeTimer = AIFleeDuration
         if SCB then SCB("Mode: Flee - Running away!") end
     elseif mode == "defend" then
-        if AIDefendTarget then
+        if AIDefendTarget and AIDefendTarget.Name then
             if SCB then SCB("Mode: Defend - Protecting " .. AIDefendTarget.Name) end
         else
             if SCB then SCB("Mode: Defend - Select a player to defend first") end
@@ -1797,7 +1671,9 @@ local function CreatePlayerSelector(parent, y)
             
             btn.MouseButton1Click:Connect(function()
                 AITargetPlayer = plr
-                if SCB then SCB("Target: " .. plr.Name) end
+                if SCB and plr and plr.Name then 
+                    SCB("Target: " .. plr.Name) 
+                end
                 
                 -- Highlight selected
                 for _, b in ipairs(listFrame:GetChildren()) do
