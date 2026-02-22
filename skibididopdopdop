@@ -63,8 +63,11 @@ local St = {
     GravityFlip = false,
     
     -- Creepy Pasta Modes
-    CreepyPastaHead = false,  -- Only head moves
-    CreepyPastaBody = false,  -- Whole body rotates
+    CreepyPastaHead = false,
+    CreepyPastaBody = false,
+    
+    -- AI Feature
+    AIControl = false,
 }
 
 -- ==============================================
@@ -101,16 +104,37 @@ local HeadTargetAngle = 0
 local HeadCurrentAngle = 0
 local BodyTargetAngle = 0
 local BodyCurrentAngle = 0
-local HeadSpeed = 300 -- Rotation speed when holding (degrees per second)
-local BodySpeed = 300 -- Rotation speed when holding (degrees per second)
-local HeadIncrement = math.rad(5) -- 5 degrees per tap (for single presses)
-local BodyIncrement = math.rad(5) -- 5 degrees per tap (for single presses)
-
--- Key states for continuous movement
+local HeadSpeed = 300
+local BodySpeed = 300
+local HeadIncrement = math.rad(5)
+local BodyIncrement = math.rad(5)
 local EPressedHead = false
 local QPressedHead = false
 local EPressedBody = false
 local QPressedBody = false
+
+-- AI variables
+local AIConnection = nil
+local AIPathfindingConnection = nil
+local AIState = "idle" -- idle, walking, fleeing, sitting, looking
+local AITargetPosition = nil
+local AILookTarget = nil
+local AITimer = 0
+local AIFleeTimer = 0
+local AISitTimer = 0
+local AIPath = nil
+local AIWaypoints = {}
+local AICurrentWaypoint = 1
+local AIWalkSpeed = 16
+local AIScanRadius = 50
+local AISitDetectionRange = 20
+local AIFleeRange = 30
+local AIFleeDuration = 5
+local AISitDuration = 3
+local AILookDuration = 2
+
+-- Points of interest for pathfinding
+local InterestPoints = {}
 
 local function AC(c) table.insert(CN, c) return c end
 
@@ -243,7 +267,6 @@ local function ToggleAnchorInterval()
             slowed = not slowed
             
             if slowed then
-                -- When in "slow mode", use BodyVelocity
                 local moveDir = Vector3.zero
                 if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + Camera.CFrame.LookVector end
                 if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - Camera.CFrame.LookVector end
@@ -256,7 +279,6 @@ local function ToggleAnchorInterval()
                     AnchorBodyVelocity.Velocity = Vector3.zero
                 end
             else
-                -- When in normal mode, stop BodyVelocity
                 AnchorBodyVelocity.Velocity = Vector3.zero
             end
             
@@ -275,11 +297,10 @@ local function ToggleAnchorInterval()
 end
 
 -- ==============================================
--- FAST CREEPY PASTA HEAD MODE (Holding = fast continuous movement)
+-- CREEPY PASTA HEAD MODE
 -- ==============================================
 local function ToggleCreepyPastaHead()
     if St.CreepyPastaHead then
-        -- Find neck joint for head turning
         local neck = Char:FindFirstChild("Head") and Char.Head:FindFirstChild("Neck")
         
         if not neck then
@@ -288,24 +309,19 @@ local function ToggleCreepyPastaHead()
             return
         end
         
-        -- Input handlers
         local function onInputBegan(input, gameProcessed)
             if gameProcessed then return end
-            
             if input.KeyCode == Enum.KeyCode.E then
                 EPressedHead = true
-                -- Single tap increment
                 HeadTargetAngle = HeadTargetAngle + HeadIncrement
             elseif input.KeyCode == Enum.KeyCode.Q then
                 QPressedHead = true
-                -- Single tap increment
                 HeadTargetAngle = HeadTargetAngle - HeadIncrement
             end
         end
         
         local function onInputEnded(input, gameProcessed)
             if gameProcessed then return end
-            
             if input.KeyCode == Enum.KeyCode.E then
                 EPressedHead = false
             elseif input.KeyCode == Enum.KeyCode.Q then
@@ -313,17 +329,14 @@ local function ToggleCreepyPastaHead()
             end
         end
         
-        -- Connect input handlers
         local inputBeganConn = UserInputService.InputBegan:Connect(onInputBegan)
         local inputEndedConn = UserInputService.InputEnded:Connect(onInputEnded)
         table.insert(CN, inputBeganConn)
         table.insert(CN, inputEndedConn)
         
-        -- Fast update loop
         CreepyPastaHeadConnection = RunService.RenderStepped:Connect(function(dt)
             if not St.CreepyPastaHead then return end
             
-            -- Continuous movement when holding
             if EPressedHead then
                 HeadTargetAngle = HeadTargetAngle + math.rad(HeadSpeed) * dt
             end
@@ -331,28 +344,23 @@ local function ToggleCreepyPastaHead()
                 HeadTargetAngle = HeadTargetAngle - math.rad(HeadSpeed) * dt
             end
             
-            -- Smoothly interpolate current angle to target angle
             HeadCurrentAngle = HeadCurrentAngle + (HeadTargetAngle - HeadCurrentAngle) * math.min(dt * 20, 1)
             
-            -- Apply head rotation
             if neck then
                 neck.C0 = CFrame.new(0, 1, 0) * CFrame.Angles(0, HeadCurrentAngle, 0)
             end
         end)
         table.insert(CN, CreepyPastaHeadConnection)
         
-        if SCB then SCB("Head Mode: Tap or hold E/Q (FAST!)") end
+        if SCB then SCB("Head Mode: Tap or hold E/Q") end
         
     elseif CreepyPastaHeadConnection then
         CreepyPastaHeadConnection:Disconnect()
         CreepyPastaHeadConnection = nil
-        
-        -- Reset head to neutral smoothly
         HeadTargetAngle = 0
         EPressedHead = false
         QPressedHead = false
         
-        -- Smooth reset
         local resetConnection = RunService.RenderStepped:Connect(function(dt)
             local neck = Char:FindFirstChild("Head") and Char.Head:FindFirstChild("Neck")
             if not neck then 
@@ -376,28 +384,23 @@ local function ToggleCreepyPastaHead()
 end
 
 -- ==============================================
--- FAST CREEPY PASTA BODY MODE (Holding = fast continuous movement)
+-- CREEPY PASTA BODY MODE
 -- ==============================================
 local function ToggleCreepyPastaBody()
     if St.CreepyPastaBody then
-        -- Input handlers
         local function onInputBegan(input, gameProcessed)
             if gameProcessed then return end
-            
             if input.KeyCode == Enum.KeyCode.E then
                 EPressedBody = true
-                -- Single tap increment
                 BodyTargetAngle = BodyTargetAngle + BodyIncrement
             elseif input.KeyCode == Enum.KeyCode.Q then
                 QPressedBody = true
-                -- Single tap increment
                 BodyTargetAngle = BodyTargetAngle - BodyIncrement
             end
         end
         
         local function onInputEnded(input, gameProcessed)
             if gameProcessed then return end
-            
             if input.KeyCode == Enum.KeyCode.E then
                 EPressedBody = false
             elseif input.KeyCode == Enum.KeyCode.Q then
@@ -405,17 +408,14 @@ local function ToggleCreepyPastaBody()
             end
         end
         
-        -- Connect input handlers
         local inputBeganConn = UserInputService.InputBegan:Connect(onInputBegan)
         local inputEndedConn = UserInputService.InputEnded:Connect(onInputEnded)
         table.insert(CN, inputBeganConn)
         table.insert(CN, inputEndedConn)
         
-        -- Fast update loop
         CreepyPastaBodyConnection = RunService.RenderStepped:Connect(function(dt)
             if not St.CreepyPastaBody or not Root then return end
             
-            -- Continuous movement when holding
             if EPressedBody then
                 BodyTargetAngle = BodyTargetAngle + math.rad(BodySpeed) * dt
             end
@@ -423,22 +423,18 @@ local function ToggleCreepyPastaBody()
                 BodyTargetAngle = BodyTargetAngle - math.rad(BodySpeed) * dt
             end
             
-            -- Smoothly interpolate current angle to target angle
             BodyCurrentAngle = BodyCurrentAngle + (BodyTargetAngle - BodyCurrentAngle) * math.min(dt * 20, 1)
             
-            -- Apply body rotation while preserving position
             local currentPos = Root.Position
             Root.CFrame = CFrame.new(currentPos) * CFrame.Angles(0, BodyCurrentAngle, 0)
         end)
         table.insert(CN, CreepyPastaBodyConnection)
         
-        if SCB then SCB("Body Mode: Tap or hold E/Q (FAST!)") end
+        if SCB then SCB("Body Mode: Tap or hold E/Q") end
         
     elseif CreepyPastaBodyConnection then
         CreepyPastaBodyConnection:Disconnect()
         CreepyPastaBodyConnection = nil
-        
-        -- Reset body smoothly
         BodyTargetAngle = 0
         EPressedBody = false
         QPressedBody = false
@@ -461,6 +457,289 @@ local function ToggleCreepyPastaBody()
         table.insert(CN, resetConnection)
         
         if SCB then SCB("Body Mode disabled") end
+    end
+end
+
+-- ==============================================
+-- AI FEATURE
+-- ==============================================
+
+-- Scan for points of interest
+local function ScanForPoints()
+    InterestPoints = {}
+    
+    -- Add other players as points of interest
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local char = plr.Character
+            if char and char:FindFirstChild("HumanoidRootPart") then
+                table.insert(InterestPoints, {
+                    Position = char.HumanoidRootPart.Position,
+                    Type = "player",
+                    Player = plr
+                })
+            end
+        end
+    end
+    
+    -- Add random points in the world (simplified - would need actual map data)
+    -- For demo, we'll just add some random offsets from current position
+    for i = 1, 5 do
+        table.insert(InterestPoints, {
+            Position = Root.Position + Vector3.new(
+                math.random(-AIScanRadius, AIScanRadius),
+                0,
+                math.random(-AIScanRadius, AIScanRadius)
+            ),
+            Type = "random"
+        })
+    end
+end
+
+-- Check if someone is sitting nearby
+local function CheckForSitting()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then
+            local char = plr.Character
+            if char then
+                local hum = char:FindFirstChild("Humanoid")
+                if hum and hum.Sit then
+                    local rootPart = char:FindFirstChild("HumanoidRootPart")
+                    if rootPart and (rootPart.Position - Root.Position).Magnitude < AISitDetectionRange then
+                        return plr, rootPart.Position
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- Check if taking damage
+local function CheckForDamage()
+    -- This would need to be connected to the Humanoid's health changing
+    -- We'll handle this in the main AI loop with a health check
+    return false
+end
+
+-- Find path to target (simplified - real pathfinding would use PathfindingService)
+local function FindPathTo(targetPos)
+    -- Simple direct path - in a real implementation you'd use PathfindingService
+    return {targetPos}
+end
+
+-- Look at target using body rotation
+local function LookAt(targetPos)
+    if not Root or not targetPos then return end
+    
+    local direction = (targetPos - Root.Position).Unit
+    local angle = math.atan2(-direction.X, -direction.Z)
+    
+    -- Smoothly set target angle
+    BodyTargetAngle = angle
+end
+
+-- Walk to target
+local function WalkTo(targetPos)
+    if not Root or not targetPos then return end
+    
+    local direction = (targetPos - Root.Position).Unit
+    local distance = (targetPos - Root.Position).Magnitude
+    
+    -- Look in the direction we're walking
+    LookAt(targetPos)
+    
+    -- Move using BodyVelocity for smooth movement
+    if not BodyVelocity then
+        BodyVelocity = Instance.new("BodyVelocity")
+        BodyVelocity.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+        BodyVelocity.P = 1e6
+        BodyVelocity.Parent = Root
+    end
+    
+    BodyVelocity.Velocity = direction * AIWalkSpeed
+    
+    if distance < 3 then
+        return true -- Reached target
+    end
+    return false
+end
+
+-- Stop moving
+local function StopMoving()
+    if BodyVelocity then
+        BodyVelocity.Velocity = Vector3.zero
+    end
+end
+
+-- Sit down
+local function SitDown()
+    if Hum and not Hum.Sit then
+        Hum.Sit = true
+    end
+end
+
+-- Stand up
+local function StandUp()
+    if Hum and Hum.Sit then
+        Hum.Sit = false
+    end
+end
+
+-- Main AI update
+local function UpdateAI(dt)
+    if not St.AIControl or not Root or not Hum then return end
+    
+    -- Update timers
+    AITimer = AITimer + dt
+    if AIFleeTimer > 0 then
+        AIFleeTimer = AIFleeTimer - dt
+    end
+    if AISitTimer > 0 then
+        AISitTimer = AISitTimer - dt
+    end
+    
+    -- Check for damage (simplified - would need health monitoring)
+    -- In a real implementation, you'd connect to Hum.HealthChanged
+    
+    -- Priority 1: Flee if taking damage
+    if AIFleeTimer > 0 then
+        if AIState ~= "fleeing" then
+            AIState = "fleeing"
+            if SCB then SCB("AI: Taking damage - fleeing!") end
+        end
+        
+        -- Find farthest player to flee to
+        local farthestDist = 0
+        local farthestPos = Root.Position + Vector3.new(50, 0, 50)
+        
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LP then
+                local char = plr.Character
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    local pos = char.HumanoidRootPart.Position
+                    local dist = (pos - Root.Position).Magnitude
+                    if dist > farthestDist then
+                        farthestDist = dist
+                        farthestPos = pos + (pos - Root.Position).Unit * 20
+                    end
+                end
+            end
+        end
+        
+        WalkTo(farthestPos)
+        return
+    end
+    
+    -- Priority 2: Check for sitting players
+    local sittingPlr, sittingPos = CheckForSitting()
+    if sittingPlr and AISitTimer <= 0 then
+        if AIState ~= "sitting" then
+            AIState = "sitting"
+            if SCB then SCB("AI: Found sitting player - joining!") end
+            AISitTimer = AISitDuration
+        end
+        
+        -- Walk to sitting player
+        local reached = WalkTo(sittingPos)
+        if reached then
+            SitDown()
+            -- Look at the player
+            LookAt(sittingPos + Vector3.new(0, 3, 0))
+        end
+        return
+    end
+    
+    -- Priority 3: Look at interesting things
+    if AITimer > AILookDuration then
+        AITimer = 0
+        ScanForPoints()
+        
+        if #InterestPoints > 0 then
+            local randomPoint = InterestPoints[math.random(#InterestPoints)]
+            AILookTarget = randomPoint.Position
+            AIState = "looking"
+            if SCB then SCB("AI: Looking at something...") end
+        end
+    end
+    
+    if AIState == "looking" and AILookTarget then
+        LookAt(AILookTarget)
+        
+        -- Stop looking after a moment
+        if AITimer > 1 then
+            AIState = "walking"
+        end
+    end
+    
+    -- Priority 4: Wander around
+    if AIState == "idle" or AIState == "walking" then
+        if not AITargetPosition or (Root.Position - AITargetPosition).Magnitude < 5 then
+            -- Pick new random destination
+            AITargetPosition = Root.Position + Vector3.new(
+                math.random(-30, 30),
+                0,
+                math.random(-30, 30)
+            )
+            AIState = "walking"
+            if SCB then SCB("AI: Wandering...") end
+        end
+        
+        WalkTo(AITargetPosition)
+    end
+end
+
+-- Damage detection setup
+local function SetupDamageDetection()
+    if Hum then
+        local lastHealth = Hum.Health
+        
+        Hum.HealthChanged:Connect(function(newHealth)
+            if St.AIControl and newHealth < lastHealth then
+                -- Taking damage!
+                AIFleeTimer = AIFleeDuration
+                if SCB then SCB("AI: Ouch! Fleeing for " .. AIFleeDuration .. " seconds") end
+            end
+            lastHealth = newHealth
+        end)
+    end
+end
+
+-- Toggle AI Control
+local function ToggleAIControl()
+    if St.AIControl then
+        -- Disable conflicting features
+        if St.Fly then
+            St.Fly = false
+            ToggleFly()
+        end
+        
+        -- Initialize AI
+        AIState = "idle"
+        AITimer = 0
+        AIFleeTimer = 0
+        AISitTimer = 0
+        ScanForPoints()
+        SetupDamageDetection()
+        
+        -- Main AI loop
+        AIConnection = RunService.Heartbeat:Connect(function(dt)
+            UpdateAI(dt)
+        end)
+        table.insert(CN, AIConnection)
+        
+        if SCB then SCB("AI Control enabled - Watching for damage, sitting players") end
+        
+    elseif AIConnection then
+        AIConnection:Disconnect()
+        AIConnection = nil
+        
+        -- Clean up
+        StopMoving()
+        StandUp()
+        BodyTargetAngle = 0
+        
+        if SCB then SCB("AI Control disabled") end
     end
 end
 
@@ -689,6 +968,7 @@ local function UL()
     St.GravityFlip = false; ToggleGravityFlip()
     St.CreepyPastaHead = false; ToggleCreepyPastaHead()
     St.CreepyPastaBody = false; ToggleCreepyPastaBody()
+    St.AIControl = false; ToggleAIControl()
     
     for _, c in ipairs(CN) do
         pcall(function() c:Disconnect() end)
@@ -700,6 +980,8 @@ local function UL()
     end
     
     WS.Gravity = 196.2
+    StopMoving()
+    StandUp()
     
     print("[Fun Hub] Unloaded")
 end
@@ -717,8 +999,8 @@ SGui.Parent = PGui
 
 local MF = Instance.new("Frame")
 MF.Name = "MainFrame"
-MF.Size = UDim2.new(0, 520, 0, 700)
-MF.Position = UDim2.new(0.5, -260, 0.5, -350)
+MF.Size = UDim2.new(0, 520, 0, 750)
+MF.Position = UDim2.new(0.5, -260, 0.5, -375)
 MF.BackgroundColor3 = CM
 MF.BorderSizePixel = 0
 MF.ClipsDescendants = true
@@ -762,7 +1044,7 @@ Foot.BackgroundColor3 = CS
 Foot.BorderSizePixel = 0
 Foot.Parent = MF
 local FLbl = Instance.new("TextLabel")
-FLbl.Text = "Movement & Funny Features"
+FLbl.Text = "Movement & Funny Features + AI"
 FLbl.Size = UDim2.new(1, -10, 1, 0)
 FLbl.Position = UDim2.new(0, 10, 0, 0)
 FLbl.BackgroundTransparency = 1
@@ -1097,6 +1379,80 @@ NTog(FunnyTab, 498, "Gravity Flip", "GravityFlip", function() ToggleGravityFlip(
 NTog(FunnyTab, 540, "Creepy Pasta - Head", "CreepyPastaHead", function() ToggleCreepyPastaHead() end)
 NTog(FunnyTab, 582, "Creepy Pasta - Body", "CreepyPastaBody", function() ToggleCreepyPastaBody() end)
 
+-- AI Tab
+local AITab = NewTab()
+table.insert(Tabs, AITab)
+SH(AITab, 8, "AI CONTROL")
+
+local AIStatusFrame = Instance.new("Frame")
+AIStatusFrame.Size = UDim2.new(1, -16, 0, 36)
+AIStatusFrame.Position = UDim2.new(0, 8, 0, 36)
+AIStatusFrame.BackgroundColor3 = CC
+AIStatusFrame.BorderSizePixel = 0
+AIStatusFrame.Parent = AITab
+Instance.new("UICorner", AIStatusFrame).CornerRadius = UDim.new(0, 6)
+local aiss = Instance.new("UIStroke", AIStatusFrame)
+aiss.Color = CB
+aiss.Thickness = 1
+
+local AIStatusLabel = Instance.new("TextLabel")
+AIStatusLabel.Text = "AI State:"
+AIStatusLabel.Size = UDim2.new(0, 60, 1, 0)
+AIStatusLabel.Position = UDim2.new(0, 12, 0, 0)
+AIStatusLabel.BackgroundTransparency = 1
+AIStatusLabel.TextColor3 = CSC
+AIStatusLabel.Font = Enum.Font.GothamMedium
+AIStatusLabel.TextSize = 12
+AIStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
+AIStatusLabel.Parent = AIStatusFrame
+
+local AIStateValue = Instance.new("TextLabel")
+AIStateValue.Text = "Idle"
+AIStateValue.Size = UDim2.new(1, -80, 1, 0)
+AIStateValue.Position = UDim2.new(0, 72, 0, 0)
+AIStateValue.BackgroundTransparency = 1
+AIStateValue.TextColor3 = CP
+AIStateValue.Font = Enum.Font.Gotham
+AIStateValue.TextSize = 12
+AIStateValue.TextXAlignment = Enum.TextXAlignment.Left
+AIStateValue.Parent = AIStatusFrame
+
+-- Update AI state display
+local function UpdateAIStateDisplay()
+    if St.AIControl then
+        AIStateValue.Text = AIState:upper()
+    else
+        AIStateValue.Text = "DISABLED"
+    end
+end
+
+NTog(AITab, 86, "Enable AI Control", "AIControl", function() 
+    ToggleAIControl()
+    UpdateAIStateDisplay()
+end)
+
+SH(AITab, 136, "AI SETTINGS")
+
+NSlider(AITab, 166, "Walk Speed", 8, 32, AIWalkSpeed, function(val) 
+    AIWalkSpeed = val 
+    if SCB then SCB("AI Walk Speed: " .. val) end
+end, false)
+
+NSlider(AITab, 232, "Scan Radius", 20, 100, AIScanRadius, function(val) 
+    AIScanRadius = val 
+    if SCB then SCB("Scan Radius: " .. val) end
+end, false)
+
+NSlider(AITab, 298, "Flee Duration (s)", 1, 10, AIFleeDuration, function(val) 
+    AIFleeDuration = val 
+    if SCB then SCB("Flee Duration: " .. val .. "s") end
+end, true)
+
+NSlider(AITab, 364, "Sit Duration (s)", 1, 10, AISitDuration, function(val) 
+    AISitDuration = val 
+    if SCB then SCB("Sit Duration: " .. val .. "s") end
+end, true)
+
 -- Settings Tab
 local SettingsTab = NewTab()
 table.insert(Tabs, SettingsTab)
@@ -1134,7 +1490,12 @@ StatusValue.Font = Enum.Font.Gotham
 StatusValue.TextSize = 12
 StatusValue.TextXAlignment = Enum.TextXAlignment.Left
 StatusValue.Parent = StatusFrame
-SCB = function(s) StatusValue.Text = s end
+SCB = function(s) 
+    StatusValue.Text = s 
+    if St.AIControl then
+        AIStateValue.Text = AIState:upper()
+    end
+end
 
 -- Main Settings
 SH(SettingsTab, 86, "MAIN SETTINGS")
@@ -1178,23 +1539,18 @@ NSlider(SettingsTab, 572, "Hold Speed (°/s)", 50, 1000, HeadSpeed, function(val
     if SCB then SCB("Hold Speed: " .. val .. "°/s") end
 end, false)
 
-NSlider(SettingsTab, 638, "Smooth Speed", 5, 50, 20, function(val) 
-    -- Smooth speed is hardcoded in the dt multiplier
-    if SCB then SCB("Smooth Speed: " .. val) end
-end, false)
-
 -- More Settings
-SH(SettingsTab, 704, "MORE SETTINGS")
-NSlider(SettingsTab, 734, "Spin Speed", 1, 30, SpinSpeed, function(val) 
+SH(SettingsTab, 638, "MORE SETTINGS")
+NSlider(SettingsTab, 668, "Spin Speed", 1, 30, SpinSpeed, function(val) 
     SpinSpeed = val 
 end)
 
-NSlider(SettingsTab, 800, "Walkspeed Value", 16, 200, WalkSpeedValue, function(val) 
+NSlider(SettingsTab, 734, "Walkspeed Value", 16, 200, WalkSpeedValue, function(val) 
     WalkSpeedValue = val 
     if St.Walkspeed then SetWalkspeed() end
 end)
 
-NSlider(SettingsTab, 866, "Jump Power", 50, 200, JumpPowerValue, function(val) 
+NSlider(SettingsTab, 800, "Jump Power", 50, 200, JumpPowerValue, function(val) 
     JumpPowerValue = val 
     if St.Jumppower then SetJumppower() end
 end)
@@ -1202,6 +1558,7 @@ end)
 -- Build sidebar tabs
 local mB, mA, mT = NST("Movement", MoveTab)
 local fB, fA, fT = NST("Funny", FunnyTab)
+local aB, aA, aT = NST("AI Control", AITab)
 local sB, sA, sT = NST("Settings", SettingsTab)
 
 -- Show Movement tab by default
@@ -1247,4 +1604,4 @@ end)
 MF.BackgroundTransparency = 1
 TweenService:Create(MF, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 0 }):Play()
 
-print("[Fun Hub] Loaded - SUPER FAST Creepy Pasta! Tap or hold E/Q")
+print("[Fun Hub] Loaded - AI Control added! Use Creepy Pasta body to walk around")
