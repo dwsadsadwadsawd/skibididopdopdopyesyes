@@ -101,14 +101,16 @@ local HeadTargetAngle = 0
 local HeadCurrentAngle = 0
 local BodyTargetAngle = 0
 local BodyCurrentAngle = 0
-local HeadSpeed = 5 -- Smoothing speed
-local BodySpeed = 5 -- Smoothing speed
-local HeadIncrement = math.rad(5) -- 5 degrees per press (faster)
-local BodyIncrement = math.rad(5) -- 5 degrees per press (faster)
+local HeadSpeed = 300 -- Rotation speed when holding (degrees per second)
+local BodySpeed = 300 -- Rotation speed when holding (degrees per second)
+local HeadIncrement = math.rad(5) -- 5 degrees per tap (for single presses)
+local BodyIncrement = math.rad(5) -- 5 degrees per tap (for single presses)
 
--- Key states
-local EPressed = false
-local QPressed = false
+-- Key states for continuous movement
+local EPressedHead = false
+local QPressedHead = false
+local EPressedBody = false
+local QPressedBody = false
 
 local function AC(c) table.insert(CN, c) return c end
 
@@ -273,7 +275,7 @@ local function ToggleAnchorInterval()
 end
 
 -- ==============================================
--- SMOOTH & FAST CREEPY PASTA HEAD MODE
+-- FAST CREEPY PASTA HEAD MODE (Holding = fast continuous movement)
 -- ==============================================
 local function ToggleCreepyPastaHead()
     if St.CreepyPastaHead then
@@ -291,22 +293,46 @@ local function ToggleCreepyPastaHead()
             if gameProcessed then return end
             
             if input.KeyCode == Enum.KeyCode.E then
+                EPressedHead = true
+                -- Single tap increment
                 HeadTargetAngle = HeadTargetAngle + HeadIncrement
             elseif input.KeyCode == Enum.KeyCode.Q then
+                QPressedHead = true
+                -- Single tap increment
                 HeadTargetAngle = HeadTargetAngle - HeadIncrement
+            end
+        end
+        
+        local function onInputEnded(input, gameProcessed)
+            if gameProcessed then return end
+            
+            if input.KeyCode == Enum.KeyCode.E then
+                EPressedHead = false
+            elseif input.KeyCode == Enum.KeyCode.Q then
+                QPressedHead = false
             end
         end
         
         -- Connect input handlers
         local inputBeganConn = UserInputService.InputBegan:Connect(onInputBegan)
+        local inputEndedConn = UserInputService.InputEnded:Connect(onInputEnded)
         table.insert(CN, inputBeganConn)
+        table.insert(CN, inputEndedConn)
         
-        -- Smooth update loop
+        -- Fast update loop
         CreepyPastaHeadConnection = RunService.RenderStepped:Connect(function(dt)
             if not St.CreepyPastaHead then return end
             
+            -- Continuous movement when holding
+            if EPressedHead then
+                HeadTargetAngle = HeadTargetAngle + math.rad(HeadSpeed) * dt
+            end
+            if QPressedHead then
+                HeadTargetAngle = HeadTargetAngle - math.rad(HeadSpeed) * dt
+            end
+            
             -- Smoothly interpolate current angle to target angle
-            HeadCurrentAngle = HeadCurrentAngle + (HeadTargetAngle - HeadCurrentAngle) * math.min(dt * HeadSpeed * 10, 1)
+            HeadCurrentAngle = HeadCurrentAngle + (HeadTargetAngle - HeadCurrentAngle) * math.min(dt * 20, 1)
             
             -- Apply head rotation
             if neck then
@@ -315,7 +341,7 @@ local function ToggleCreepyPastaHead()
         end)
         table.insert(CN, CreepyPastaHeadConnection)
         
-        if SCB then SCB("Head Mode: E/Q to move (smooth & fast)") end
+        if SCB then SCB("Head Mode: Tap or hold E/Q (FAST!)") end
         
     elseif CreepyPastaHeadConnection then
         CreepyPastaHeadConnection:Disconnect()
@@ -323,6 +349,8 @@ local function ToggleCreepyPastaHead()
         
         -- Reset head to neutral smoothly
         HeadTargetAngle = 0
+        EPressedHead = false
+        QPressedHead = false
         
         -- Smooth reset
         local resetConnection = RunService.RenderStepped:Connect(function(dt)
@@ -332,7 +360,7 @@ local function ToggleCreepyPastaHead()
                 return
             end
             
-            HeadCurrentAngle = HeadCurrentAngle + (0 - HeadCurrentAngle) * math.min(dt * HeadSpeed * 10, 1)
+            HeadCurrentAngle = HeadCurrentAngle + (0 - HeadCurrentAngle) * math.min(dt * 20, 1)
             neck.C0 = CFrame.new(0, 1, 0) * CFrame.Angles(0, HeadCurrentAngle, 0)
             
             if math.abs(HeadCurrentAngle) < 0.01 then
@@ -348,7 +376,7 @@ local function ToggleCreepyPastaHead()
 end
 
 -- ==============================================
--- SMOOTH & FAST CREEPY PASTA BODY MODE
+-- FAST CREEPY PASTA BODY MODE (Holding = fast continuous movement)
 -- ==============================================
 local function ToggleCreepyPastaBody()
     if St.CreepyPastaBody then
@@ -357,22 +385,46 @@ local function ToggleCreepyPastaBody()
             if gameProcessed then return end
             
             if input.KeyCode == Enum.KeyCode.E then
+                EPressedBody = true
+                -- Single tap increment
                 BodyTargetAngle = BodyTargetAngle + BodyIncrement
             elseif input.KeyCode == Enum.KeyCode.Q then
+                QPressedBody = true
+                -- Single tap increment
                 BodyTargetAngle = BodyTargetAngle - BodyIncrement
+            end
+        end
+        
+        local function onInputEnded(input, gameProcessed)
+            if gameProcessed then return end
+            
+            if input.KeyCode == Enum.KeyCode.E then
+                EPressedBody = false
+            elseif input.KeyCode == Enum.KeyCode.Q then
+                QPressedBody = false
             end
         end
         
         -- Connect input handlers
         local inputBeganConn = UserInputService.InputBegan:Connect(onInputBegan)
+        local inputEndedConn = UserInputService.InputEnded:Connect(onInputEnded)
         table.insert(CN, inputBeganConn)
+        table.insert(CN, inputEndedConn)
         
-        -- Smooth update loop
+        -- Fast update loop
         CreepyPastaBodyConnection = RunService.RenderStepped:Connect(function(dt)
             if not St.CreepyPastaBody or not Root then return end
             
+            -- Continuous movement when holding
+            if EPressedBody then
+                BodyTargetAngle = BodyTargetAngle + math.rad(BodySpeed) * dt
+            end
+            if QPressedBody then
+                BodyTargetAngle = BodyTargetAngle - math.rad(BodySpeed) * dt
+            end
+            
             -- Smoothly interpolate current angle to target angle
-            BodyCurrentAngle = BodyCurrentAngle + (BodyTargetAngle - BodyCurrentAngle) * math.min(dt * BodySpeed * 10, 1)
+            BodyCurrentAngle = BodyCurrentAngle + (BodyTargetAngle - BodyCurrentAngle) * math.min(dt * 20, 1)
             
             -- Apply body rotation while preserving position
             local currentPos = Root.Position
@@ -380,7 +432,7 @@ local function ToggleCreepyPastaBody()
         end)
         table.insert(CN, CreepyPastaBodyConnection)
         
-        if SCB then SCB("Body Mode: E/Q to rotate (smooth & fast)") end
+        if SCB then SCB("Body Mode: Tap or hold E/Q (FAST!)") end
         
     elseif CreepyPastaBodyConnection then
         CreepyPastaBodyConnection:Disconnect()
@@ -388,6 +440,8 @@ local function ToggleCreepyPastaBody()
         
         -- Reset body smoothly
         BodyTargetAngle = 0
+        EPressedBody = false
+        QPressedBody = false
         
         local resetConnection = RunService.RenderStepped:Connect(function(dt)
             if not Root then 
@@ -395,7 +449,7 @@ local function ToggleCreepyPastaBody()
                 return
             end
             
-            BodyCurrentAngle = BodyCurrentAngle + (0 - BodyCurrentAngle) * math.min(dt * BodySpeed * 10, 1)
+            BodyCurrentAngle = BodyCurrentAngle + (0 - BodyCurrentAngle) * math.min(dt * 20, 1)
             local currentPos = Root.Position
             Root.CFrame = CFrame.new(currentPos) * CFrame.Angles(0, BodyCurrentAngle, 0)
             
@@ -663,8 +717,8 @@ SGui.Parent = PGui
 
 local MF = Instance.new("Frame")
 MF.Name = "MainFrame"
-MF.Size = UDim2.new(0, 520, 0, 650)
-MF.Position = UDim2.new(0.5, -260, 0.5, -325)
+MF.Size = UDim2.new(0, 520, 0, 700)
+MF.Position = UDim2.new(0.5, -260, 0.5, -350)
 MF.BackgroundColor3 = CM
 MF.BorderSizePixel = 0
 MF.ClipsDescendants = true
@@ -1112,19 +1166,20 @@ end, false)
 -- CREEPY PASTA SETTINGS
 SH(SettingsTab, 476, "CREEPY PASTA")
 
-NSlider(SettingsTab, 506, "Head Increment", 1, 20, math.deg(HeadIncrement), function(val) 
+NSlider(SettingsTab, 506, "Tap Increment (°)", 1, 30, math.deg(HeadIncrement), function(val) 
     HeadIncrement = math.rad(val)
-    if SCB then SCB("Head Increment: " .. val .. "°") end
-end, false)
-
-NSlider(SettingsTab, 572, "Body Increment", 1, 20, math.deg(BodyIncrement), function(val) 
     BodyIncrement = math.rad(val)
-    if SCB then SCB("Body Increment: " .. val .. "°") end
+    if SCB then SCB("Tap Increment: " .. val .. "°") end
 end, false)
 
-NSlider(SettingsTab, 638, "Smooth Speed", 1, 20, HeadSpeed, function(val) 
+NSlider(SettingsTab, 572, "Hold Speed (°/s)", 50, 1000, HeadSpeed, function(val) 
     HeadSpeed = val
     BodySpeed = val
+    if SCB then SCB("Hold Speed: " .. val .. "°/s") end
+end, false)
+
+NSlider(SettingsTab, 638, "Smooth Speed", 5, 50, 20, function(val) 
+    -- Smooth speed is hardcoded in the dt multiplier
     if SCB then SCB("Smooth Speed: " .. val) end
 end, false)
 
@@ -1192,4 +1247,4 @@ end)
 MF.BackgroundTransparency = 1
 TweenService:Create(MF, TweenInfo.new(0.22, Enum.EasingStyle.Quad), { BackgroundTransparency = 0 }):Play()
 
-print("[Fun Hub] Loaded - Smooth & Fast Creepy Pasta modes!")
+print("[Fun Hub] Loaded - SUPER FAST Creepy Pasta! Tap or hold E/Q")
